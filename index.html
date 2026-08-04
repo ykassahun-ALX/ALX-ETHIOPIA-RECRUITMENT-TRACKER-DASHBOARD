@@ -344,7 +344,7 @@
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
             <thead>
-              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Paid ÷ Activated</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
+              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
@@ -424,7 +424,7 @@
             <option value="enrolled">Enrolled</option>
             <option value="paid">Paid</option>
             <option value="convEnrolled">Paid ÷ Enrolled</option>
-            <option value="convActivated">Paid ÷ Activated</option>
+            <option value="convActivated">Activated ÷ Paid</option>
           </select>
         </div>
       </div>
@@ -846,7 +846,7 @@
       const deltaEnrolled = prev ? p.totals.enrolled - prev.totals.enrolled : null;
       const deltaPaid = prev ? p.totals.paid - prev.totals.paid : null;
       const convE = p.totals.enrolled ? (p.totals.paid/p.totals.enrolled*100).toFixed(1) : "0.0";
-      const convA = p.totals.activated ? (p.totals.paid/p.totals.activated*100).toFixed(1) : "0.0";
+      const convA = p.totals.paid ? (p.totals.activated/p.totals.paid*100).toFixed(1) : "0.0";
       const tr = document.createElement("tr");
       tr.innerHTML =
         "<td>"+escapeHtml(dates[i])+"</td>" +
@@ -1361,7 +1361,7 @@
       country,
       enrolled: v.enrolled, activated: v.activated, paid: v.paid,
       convEnrolled: v.enrolled ? v.paid/v.enrolled : 0,
-      convActivated: v.activated ? v.paid/v.activated : 0
+      convActivated: v.paid ? v.activated/v.paid : 0
     })).filter(c => c.enrolled > 0);
 
     const metric = document.getElementById("rankMetric").value;
@@ -1372,7 +1372,7 @@
     board.innerHTML =
       '<div class="lane-head">' +
         '<span></span><span>Country</span><span></span>' +
-        '<div class="head-numbers"><span>Enrolled</span><span>Paid</span><span>Paid ÷ Enrolled</span><span>Paid ÷ Activated</span></div>' +
+        '<div class="head-numbers"><span>Enrolled</span><span>Paid</span><span>Paid ÷ Enrolled</span><span>Activated ÷ Paid</span></div>' +
         '<span></span>' +
       '</div>';
 
