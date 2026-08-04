@@ -329,7 +329,7 @@
   <div id="dashboardBody">
 
     <div class="card" id="publicNotice" style="display:none; background:var(--surface-alt); font-size:12.5px; color:var(--muted);">
-      This is a summary view published for general viewing. The searchable learner-by-learner directory (with names/emails) is only available to signed-in admins working from a live CSV upload.
+      This dashboard, including individual learner names, emails, and payment status, is visible to anyone with this link — it is not restricted to admins. Sign in as Admin only to upload new data.
     </div>
 
     <section class="card" id="snapshotsSection" style="display:none">
@@ -365,7 +365,7 @@
           <div class="filter-label">Country <span style="font-weight:400; text-transform:none; color:var(--muted)">(select several to compare)</span></div>
           <div class="chip-row" id="countryChips"></div>
         </div>
-        <div>
+        <div id="moduleFilterBlock">
           <div class="filter-label">Current module</div>
           <select id="courseFilter"><option value="all">All modules</option></select>
         </div>
@@ -639,9 +639,13 @@
     emptyStateAdmin.style.display = (!hasData && isAdmin) ? "block" : "none";
     emptyStatePublic.style.display = (!hasData && !isAdmin) ? "block" : "none";
   }
+  function updatePublicNoticeVisibility(){
+    document.getElementById("publicNotice").style.display = (isAdmin || !learners.length) ? "none" : "block";
+  }
   function setAdmin(next){
     isAdmin = next;
     uploadCard.style.display = isAdmin ? "block" : "none";
+    updatePublicNoticeVisibility();
     viewExecutiveBtn.classList.toggle("active", !isAdmin);
     viewAdminBtn.classList.toggle("active", isAdmin);
     updateEmptyState();
@@ -657,18 +661,26 @@
   // Static hosting (like GitHub Pages) has no database, so the only way for OTHER
   // people opening the link to see the same data — without uploading the CSV
   // themselves — is for the admin to publish files that sit next to this HTML
-  // file. Every publish writes a dated file (data-YYYY-MM-DD.json) rather than
-  // overwriting one — that history is what lets the dashboard show day-over-day
-  // change instead of just "right now". A small snapshots-index.json tracks
-  // which dates exist so the page knows what to offer for comparison.
+  // file.
   //
-  // IMPORTANT: every snapshot deliberately contains ONLY aggregate counts —
-  // no names, emails, or other per-learner detail. Two reasons: (1) a full
-  // per-learner export for ~98k learners is tens of MB, over GitHub's 25MB
-  // drag-and-drop upload limit; (2) publishing real names/emails/payment status
-  // into a public repo is a privacy problem regardless of size. The full
-  // searchable directory stays admin-only, populated by uploading the live CSV
-  // in your own browser each session — it's never published.
+  // NOTE ON PRIVACY: by explicit choice, these snapshots contain FULL per-learner
+  // detail — names, emails, activation/payment status — not just aggregate counts.
+  // That means anyone with the link can see individual learner records, not just
+  // totals. That's a deliberate tradeoff made in favor of everyone (not just
+  // admins) being able to use the filters and search the directory. If that
+  // changes, only the payload built below needs to go back to aggregate-only.
+  //
+  // Because full per-learner data for tens of thousands of learners is well
+  // over GitHub's 25MB drag-and-drop upload limit, each day's publish is split
+  // into multiple part files (data-YYYY-MM-DD-partN.json) sized safely under
+  // that limit. A small snapshots-index.json records, per date, how many parts
+  // exist, so the page knows how many files to fetch and stitch back together.
+  // A separate, tiny agg-YYYY-MM-DD.json (totals/gender/country only) is also
+  // published per day — that one is what powers the lightweight multi-day trend
+  // comparison, without needing to download every historical day's full data.
+  const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
+  let datePartsMap = new Map(); // date -> number of parts published for that date
+
   function todayDateString(){
     const d = new Date();
     return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
@@ -682,6 +694,18 @@
     URL.revokeObjectURL(url);
     return blob.size;
   }
+  // downloads files one at a time with a short gap — browsers can silently
+  // block several rapid-fire downloads triggered in the same tick
+  function downloadSequence(items, onDone){
+    let i = 0; let totalBytes = 0;
+    function next(){
+      if (i >= items.length){ onDone(totalBytes); return; }
+      const { filename, obj } = items[i++];
+      totalBytes += downloadJSON(filename, obj);
+      setTimeout(next, 350);
+    }
+    next();
+  }
 
   document.getElementById("publishBtn").addEventListener("click", () => {
     if (!learners.length){
@@ -690,41 +714,55 @@
     }
     const publishedAt = new Date();
     const dateStr = todayDateString();
-    const payload = {
-      date: dateStr,
-      publishedAt: publishedAt.toISOString(),
-      totals: computeTotals(learners),
-      gender: Object.fromEntries(computeGenderCounts(learners)),
-      byCountry: Object.fromEntries(computeCountryAgg(learners))
-    };
+
+    // chunk the full learner array so no single file exceeds GitHub's upload limit
+    const fullSize = JSON.stringify(learners).length;
+    const numParts = Math.max(1, Math.ceil(fullSize / CHUNK_TARGET_BYTES));
+    const chunkLen = Math.ceil(learners.length / numParts);
+    const files = [];
+    for (let p = 0; p < numParts; p++){
+      const slice = learners.slice(p*chunkLen, (p+1)*chunkLen);
+      files.push({
+        filename: "data-" + dateStr + "-part" + (p+1) + ".json",
+        obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
+      });
+    }
+    // small aggregate file, used only for the historical trend chart
+    files.push({
+      filename: "agg-" + dateStr + ".json",
+      obj: {
+        date: dateStr, publishedAt: publishedAt.toISOString(),
+        totals: computeTotals(learners),
+        gender: Object.fromEntries(computeGenderCounts(learners)),
+        byCountry: Object.fromEntries(computeCountryAgg(learners))
+      }
+    });
 
     fetch("snapshots-index.json", { cache: "no-store" })
       .then(res => res.ok ? res.json() : { dates: [] })
       .catch(() => ({ dates: [] }))
       .then(indexPayload => {
-        const dates = new Set(Array.isArray(indexPayload.dates) ? indexPayload.dates : []);
-        dates.add(dateStr);
-        const sortedDates = [...dates].sort();
+        const dateMap = new Map((Array.isArray(indexPayload.dates) ? indexPayload.dates : [])
+          .map(d => typeof d === "string" ? [d, 1] : [d.date, d.parts])); // tolerate old flat-string format
+        dateMap.set(dateStr, numParts);
+        const sortedDates = [...dateMap.keys()].sort().map(date => ({ date, parts: dateMap.get(date) }));
+        files.push({ filename: "snapshots-index.json", obj: { dates: sortedDates } });
 
-        const dataSize = downloadJSON("data-" + dateStr + ".json", payload);
-        // small delay avoids some browsers silently blocking a 2nd rapid-fire download
-        setTimeout(() => {
-          downloadJSON("snapshots-index.json", { dates: sortedDates });
+        downloadSequence(files, (totalBytes) => {
           setLastUpdated(publishedAt, "published");
           showToast(
-            "Downloaded 2 files: data-" + dateStr + ".json (" + (dataSize/1024).toFixed(1) + " KB) and an updated snapshots-index.json. " +
-            "Upload BOTH into the same folder as index.html — the index file replaces the old one, the data file is new.",
-            9000
+            "Downloaded " + files.length + " files (" + (totalBytes/1024/1024).toFixed(1) + " MB total, largest part safely under 25MB). " +
+            "Upload ALL of them into the same folder as index.html — snapshots-index.json replaces the old one, the rest are new files.",
+            10000
           );
-        }, 400);
+        });
       });
   });
 
-  // date sits in snapshotsCache after first fetch, so re-selecting a date already
-  // viewed this session doesn't re-hit the network
-  function loadSnapshot(date){
+  // ---- lightweight aggregate loader (for the historical trend chart only) ----
+  function loadAgg(date){
     if (snapshotsCache.has(date)) return Promise.resolve(snapshotsCache.get(date));
-    return fetch("data-" + date + ".json", { cache: "no-store" })
+    return fetch("agg-" + date + ".json", { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("missing " + date); return res.json(); })
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
   }
@@ -757,13 +795,12 @@
     });
   }
 
+  // drives ONLY the historical trend chart/table — the main dashboard (stat
+  // cards, charts, filters, directory) always reflects the latest full dataset,
+  // loaded separately by loadFullSnapshotForLatestDate()
   function loadAndRenderSelectedDates(){
     const dates = [...selectedDates].sort();
-    Promise.all(dates.map(loadSnapshot)).then(payloads => {
-      const latest = payloads[payloads.length - 1];
-      renderPublicSummary(latest); // stat cards / gender / bar / leaderboard reflect the most recent selected date
-      const publishedDate = latest.publishedAt ? new Date(latest.publishedAt) : new Date();
-      setLastUpdated(publishedDate, "published");
+    Promise.all(dates.map(loadAgg)).then(payloads => {
       if (payloads.length > 1){
         lastTrendDates = dates; lastTrendPayloads = payloads;
         renderTrend(dates, payloads);
@@ -823,6 +860,30 @@
     });
   }
 
+  // fetches and merges every part file for a given date, then feeds the result
+  // through the exact same pipeline a live CSV upload uses — so Executive View
+  // gets the full filterable dashboard, not just aggregate counts
+  function loadFullSnapshotForDate(date){
+    const parts = datePartsMap.get(date) || 1;
+    const fetches = [];
+    for (let p = 1; p <= parts; p++){
+      fetches.push(
+        fetch("data-" + date + "-part" + p + ".json", { cache: "no-store" })
+          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
+      );
+    }
+    return Promise.all(fetches).then(chunks => {
+      let merged = [];
+      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
+      learners = merged;
+      finalizeLearnersData();
+      renderAll();
+      const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
+      setLastUpdated(publishedAt, "published");
+      document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
+    });
+  }
+
   // tries to load the published snapshot history sitting next to this page.
   // Silently does nothing if it's missing (first-ever run) or unreachable (e.g.
   // opened as a local file, or inside this preview sandbox, where fetch is blocked).
@@ -831,15 +892,19 @@
       .then(res => { if (!res.ok) throw new Error("no index"); return res.json(); })
       .then(indexPayload => {
         if (!indexPayload || !Array.isArray(indexPayload.dates) || !indexPayload.dates.length) throw new Error("empty index");
-        availableDates = [...indexPayload.dates].sort();
+        const entries = indexPayload.dates.map(d => typeof d === "string" ? { date: d, parts: 1 } : d); // tolerate old flat-string format
+        entries.sort((a,b) => a.date < b.date ? -1 : 1);
+        availableDates = entries.map(e => e.date);
+        datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
         selectedDates = new Set([availableDates[availableDates.length-1]]);
         buildDateChips();
+        loadFullSnapshotForDate(availableDates[availableDates.length-1]);
         loadAndRenderSelectedDates();
       })
       .catch(() => tryLoadLegacySnapshot());
   }
 
-  // backward compatibility with the older single-file (data.json, no history) format
+  // backward compatibility with the older aggregate-only single-file format
   function tryLoadLegacySnapshot(){
     fetch("data.json", { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("no snapshot"); return res.json(); })
@@ -902,6 +967,7 @@
           fileStatus.classList.add("ok");
           fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + learners.length.toLocaleString() + " unique learners";
           setLastUpdated(new Date(), "local");
+          document.getElementById("snapshotsSection").style.display = "none";
           renderAll(true);
         }));
       };
@@ -1026,6 +1092,9 @@
       opt.value = c; opt.textContent = c;
       courseSelect.appendChild(opt);
     });
+    // this file format has no course/module granularity — nothing to filter by
+    document.getElementById("moduleFilterBlock").style.display = allCourses.length ? "block" : "none";
+    if (!allCourses.length) filters.course = "all";
 
     const dirCountrySelect = document.getElementById("directoryCountryFilter");
     dirCountrySelect.innerHTML = '<option value="all">All countries</option>';
@@ -1138,8 +1207,7 @@
     if (!learners.length) return;
     viewMode = "full";
     dashboardBody.style.display = "block";
-    document.getElementById("publicNotice").style.display = "none";
-    document.getElementById("snapshotsSection").style.display = "none";
+    updatePublicNoticeVisibility();
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
     const filtered = getFiltered();
