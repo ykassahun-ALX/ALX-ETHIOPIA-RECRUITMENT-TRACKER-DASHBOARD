@@ -166,8 +166,9 @@
   .link-btn{ background:none; border:none; color: var(--accent-dark); font-size:12.5px; cursor:pointer; font-weight:600; text-decoration:underline; }
 
   /* ---------- Stat cards ---------- */
-  .stat-grid{ display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; }
-  @media (max-width: 900px){ .stat-grid{ grid-template-columns: repeat(2,1fr);} }
+  .stat-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:16px; }
+  @media (max-width: 1100px){ .stat-grid{ grid-template-columns: repeat(3,1fr);} }
+  @media (max-width: 640px){ .stat-grid{ grid-template-columns: repeat(2,1fr);} }
   .stat-card{ background:var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:18px; box-shadow: var(--shadow); }
   .stat-card .label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; }
   .stat-card .value{ font-size:28px; font-weight:700; margin-top:6px; color: var(--ink); }
@@ -179,7 +180,21 @@
   /* ---------- Charts row ---------- */
   .charts-row{ display:grid; grid-template-columns: 1fr 1.6fr; gap:18px; }
   @media (max-width: 900px){ .charts-row{ grid-template-columns: 1fr; } }
-  .gender-card{ max-width: 380px; }
+  .gender-card{ max-width: 520px; }
+  .gender-flex{ display:flex; align-items:center; gap:22px; }
+  .chart-box-donut{ width:150px; height:150px; flex-shrink:0; }
+  .donut-center{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    text-align:center; pointer-events:none;
+  }
+  .donut-center-value{ font-size:19px; font-weight:700; color:var(--ink); line-height:1.1; }
+  .donut-center-label{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:1px; }
+  .gender-legend{ flex:1; display:flex; flex-direction:column; gap:10px; min-width:0; }
+  .gender-legend-row{ display:flex; align-items:center; gap:8px; font-size:12.5px; }
+  .gender-legend-dot{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .gender-legend-label{ color:var(--ink); font-weight:600; flex:1; }
+  .gender-legend-count{ color:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:11.5px; }
+  .gender-legend-pct{ color:var(--ink); font-weight:700; font-family:"IBM Plex Mono",monospace; font-size:12.5px; width:48px; text-align:right; }
   .toggle-group{ display:flex; gap:4px; background:var(--surface-alt); border-radius:8px; padding:3px; }
   .toggle-group button{
     border:none; background:none; padding:5px 12px; font-size:12px; border-radius:6px; cursor:pointer; color:var(--muted); font-weight:600;
@@ -277,14 +292,10 @@
       <div class="brand-text">
         <h1>ALX Ethiopia's Learner Operations &amp; Analytics</h1>
         <p>Enrollment, activation &amp; payment conversion across programs and countries</p>
+        <div id="lastUpdatedLine" style="margin-top:4px; font-size:11px; color:var(--muted);"></div>
       </div>
     </div>
     <div class="top-right">
-      <div class="top-meta">
-        <div class="rows num" id="topLearnerCount">—</div>
-        <div>unique learners loaded</div>
-        <div id="lastUpdatedLine" style="margin-top:5px; font-size:11px; opacity:.85;"></div>
-      </div>
       <div class="view-toggle">
         <button id="viewExecutiveBtn" type="button" class="active"><span class="dot"></span>Executive View</button>
         <button id="viewAdminBtn" type="button"><span class="dot"></span>Admin Data Ops</button>
@@ -332,7 +343,7 @@
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
             <thead>
-              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Conv. of enrolled</th><th>Conv. of activated</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
+              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Paid ÷ Activated</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
@@ -378,6 +389,11 @@
           <div class="value num" id="statPaid">0</div>
           <div class="footnote" id="statPaidPct">0% of enrolled · 0% of activated</div>
         </div>
+        <div class="stat-card blue">
+          <div class="label">Graduated</div>
+          <div class="value num" id="statGraduated">0</div>
+          <div class="footnote" id="statGraduatedPct">0% of enrolled</div>
+        </div>
         <div class="stat-card warn">
           <div class="label">Multi-program learners</div>
           <div class="value num" id="statMulti">0</div>
@@ -406,8 +422,8 @@
           <select id="rankMetric">
             <option value="enrolled">Enrolled</option>
             <option value="paid">Paid</option>
-            <option value="convEnrolled">Conversion (of enrolled)</option>
-            <option value="convActivated">Conversion (of activated)</option>
+            <option value="convEnrolled">Paid ÷ Enrolled</option>
+            <option value="convActivated">Paid ÷ Activated</option>
           </select>
         </div>
       </div>
@@ -417,7 +433,16 @@
     <section>
       <div class="card gender-card">
         <div class="section-head"><h2>Gender split</h2></div>
-        <div class="chart-box chart-box-sm"><canvas id="genderChart"></canvas></div>
+        <div class="gender-flex">
+          <div class="chart-box chart-box-donut">
+            <canvas id="genderChart"></canvas>
+            <div class="donut-center">
+              <div class="donut-center-value num" id="genderCenterValue">0</div>
+              <div class="donut-center-label">Learners</div>
+            </div>
+          </div>
+          <div id="genderLegend" class="gender-legend"></div>
+        </div>
       </div>
     </section>
 
@@ -523,7 +548,6 @@
   const emptyStateAdmin = document.getElementById("emptyStateAdmin");
   const emptyStatePublic = document.getElementById("emptyStatePublic");
   const uploadCard = document.getElementById("uploadCard");
-  const topLearnerCount = document.getElementById("topLearnerCount");
   const lastUpdatedLine = document.getElementById("lastUpdatedLine");
   const themeToggle = document.getElementById("themeToggle");
   const themeIcon = document.getElementById("themeIcon");
@@ -864,6 +888,15 @@
         }
         fileStatusText.textContent = "Aggregating " + parsed.data.length.toLocaleString() + " rows…";
         requestAnimationFrame(() => requestAnimationFrame(() => {
+          // reset filters from any previously loaded file — otherwise, e.g., a
+          // country selected while testing an earlier (smaller) CSV silently
+          // keeps filtering out everything not in that old selection
+          filters.programs.clear(); filters.countries.clear(); filters.course = "all"; filters.search = "";
+          document.getElementById("searchBox").value = "";
+          document.getElementById("courseFilter").value = "all";
+          document.getElementById("directoryCountryFilter").value = "all";
+          page = 1;
+
           aggregate(parsed.data);
           spinner.classList.remove("show");
           fileStatus.classList.add("ok");
@@ -881,6 +914,16 @@
   }
 
   // ---------------- Aggregation ----------------
+  // The program only operates in these countries — anything else in the CSV
+  // (typos, stray sign-ups, test data, learners outside the target markets)
+  // gets grouped into "Other" instead of cluttering the country picker with
+  // every country that happens to appear in a free-text field.
+  const HUB_COUNTRIES = ["Nigeria","Kenya","Ghana","Ethiopia","South Africa","Egypt","Rwanda","Morocco"];
+  function normalizeCountry(raw){
+    const c = (raw || "").trim();
+    return HUB_COUNTRIES.includes(c) ? c : "Other";
+  }
+
   function aggregate(rows){
     const map = new Map();
 
@@ -895,16 +938,21 @@
           first: row["First name"] || "",
           last: row["Last name"] || "",
           gender: row["Gender"] || "n/a",
-          country: row["Country of residence"] || "n/a",
+          country: normalizeCountry(row["Country of residence"]),
           region: row["Regions"] || "n/a",
           activated: false,
           paid: false,
+          graduated: false,
           programs: new Map() // programName -> {seq, name, status, health}
         };
         map.set(email, L);
       }
-      if (row["Is enrollment activated"] === "Yes") L.activated = true;
+      // two different export formats have shown up in practice: a detailed
+      // course-level export, and a simpler program-level one — check both
+      // column names so either works without the admin needing to know which.
+      if (row["Is enrollment activated"] === "Yes" || row["Is program activated"] === "Yes") L.activated = true;
       if (row["Payment plan status"] === "ACTIVE") L.paid = true;
+      if (row["Learner health classification status"] === "Graduated" || row["Is program graduated"] === "Yes") L.graduated = true;
 
       const program = row["Program name"] || "n/a";
       const courseName = row["Course name"] || "n/a";
@@ -933,7 +981,7 @@
       learners.push({
         email: L.email, first: L.first, last: L.last, gender: L.gender,
         country: L.country, region: L.region,
-        activated: L.activated, paid: L.paid,
+        activated: L.activated, paid: L.paid, graduated: L.graduated,
         programs: progArr, multi: progArr.length > 1
       });
     }
@@ -1094,7 +1142,6 @@
     document.getElementById("snapshotsSection").style.display = "none";
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
-    topLearnerCount.textContent = learners.length.toLocaleString();
     const filtered = getFiltered();
     renderStats(computeTotals(filtered));
     renderGenderChart(computeGenderCounts(filtered));
@@ -1113,7 +1160,6 @@
     document.getElementById("publicNotice").style.display = "block";
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
-    topLearnerCount.textContent = payload.totals.enrolled.toLocaleString();
     renderStats(payload.totals);
     renderGenderChart(new Map(Object.entries(payload.gender)));
     const countryAgg = new Map(Object.entries(payload.byCountry));
@@ -1127,17 +1173,20 @@
       enrolled: rows.length,
       activated: rows.filter(r=>r.activated).length,
       paid: rows.filter(r=>r.paid).length,
+      graduated: rows.filter(r=>r.graduated).length,
       multi: rows.filter(r=>r.multi).length
     };
   }
 
   function renderStats(totals){
-    const { enrolled, activated, paid, multi } = totals;
+    const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
     document.getElementById("statActivated").textContent = activated.toLocaleString();
     document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
     document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled · " + pct(paid,activated) + "% of activated";
+    document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
+    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
   }
 
@@ -1159,39 +1208,34 @@
     const data = rawLabels.map(l=>counts.get(l));
     const total = data.reduce((a,b)=>a+b,0) || 1;
     const labels = rawLabels.map(l => prettyGender(l));
-    const colors = ["#1F6E46","#3B6E9E","#B9762F","#A6483F","#8C8C8C"];
+    const colors = ["#3B6E9E","#B9762F","#4FB584","#A6483F","#8C8C8C"];
     const c = chartColors();
+
+    document.getElementById("genderCenterValue").textContent = total.toLocaleString();
+
+    const legendWrap = document.getElementById("genderLegend");
+    legendWrap.innerHTML = "";
+    labels.forEach((lab, i) => {
+      const val = data[i];
+      const rowPct = ((val/total)*100).toFixed(1);
+      const row = document.createElement("div");
+      row.className = "gender-legend-row";
+      row.innerHTML =
+        '<span class="gender-legend-dot" style="background:'+colors[i % colors.length]+'"></span>' +
+        '<span class="gender-legend-label">'+escapeHtml(lab)+'</span>' +
+        '<span class="gender-legend-count">'+val.toLocaleString()+'</span>' +
+        '<span class="gender-legend-pct">'+rowPct+'%</span>';
+      legendWrap.appendChild(row);
+    });
+
     if (genderChartRef) genderChartRef.destroy();
     genderChartRef = new Chart(document.getElementById("genderChart"), {
       type: "doughnut",
-      data: { labels: labels, datasets: [{ data: data, backgroundColor: colors, borderWidth: 2, borderColor: c.surface }] },
-      plugins: [ChartDataLabels],
+      data: { labels: labels, datasets: [{ data: data, backgroundColor: colors, borderWidth: 3, borderColor: c.surface }] },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: "bottom",
-            labels: {
-              boxWidth: 10, font: { size: 11.5 }, color: c.text,
-              generateLabels: (chart) => chart.data.labels.map((lab, i) => {
-                const val = chart.data.datasets[0].data[i];
-                const pct = ((val/total)*100).toFixed(1);
-                return {
-                  text: lab + " — " + pct + "%",
-                  fillStyle: colors[i % colors.length],
-                  strokeStyle: colors[i % colors.length],
-                  index: i
-                };
-              })
-            }
-          },
-          datalabels: {
-            color: "#fff",
-            font: { size: 12, weight: "600" },
-            formatter: (value) => ((value/total)*100).toFixed(1) + "%"
-          }
-        },
-        cutout: "62%"
+        plugins: { legend: { display:false }, tooltip: { enabled:true } },
+        cutout: "72%"
       }
     });
   }
@@ -1222,9 +1266,17 @@
           { label:"Paid", data: labels.map(l=>groups.get(l).paid), backgroundColor: c.paid }
         ]
       },
+      plugins: [ChartDataLabels],
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display:false } },
+        plugins: {
+          legend: { display:false },
+          datalabels: {
+            anchor: "end", align: "end", offset: 2,
+            color: c.text, font: { size: 9.5, weight:"600" },
+            formatter: (value) => value > 0 ? value.toLocaleString() : ""
+          }
+        },
         scales: {
           x: { ticks: { font:{size:11}, color: c.text }, grid: { color: c.grid } },
           y: { beginAtZero:true, ticks: { color: c.text }, grid: { color: c.grid } }
@@ -1249,7 +1301,7 @@
     board.innerHTML =
       '<div class="lane-head">' +
         '<span></span><span>Country</span><span></span>' +
-        '<div class="head-numbers"><span>Enrolled</span><span>Paid</span><span>Conv. of enrolled</span><span>Conv. of activated</span></div>' +
+        '<div class="head-numbers"><span>Enrolled</span><span>Paid</span><span>Paid ÷ Enrolled</span><span>Paid ÷ Activated</span></div>' +
         '<span></span>' +
       '</div>';
 
