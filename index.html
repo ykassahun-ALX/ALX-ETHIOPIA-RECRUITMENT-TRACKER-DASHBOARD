@@ -148,6 +148,7 @@
 
   /* ---------- Filters ---------- */
   .filter-grid{ display:grid; grid-template-columns: 1.3fr 1fr 1fr; gap:18px; }
+  .filter-grid.no-module{ grid-template-columns: 1fr 1.3fr; }
   @media (max-width: 900px){ .filter-grid{ grid-template-columns: 1fr; } }
   .filter-label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color: var(--muted); font-weight:600; margin-bottom:8px; }
   .chip-row{ display:flex; flex-wrap:wrap; gap:6px; }
@@ -356,7 +357,7 @@
         <h2>Filters</h2>
         <button class="link-btn" id="clearFilters">Clear all filters</button>
       </div>
-      <div class="filter-grid">
+      <div class="filter-grid" id="filterGrid">
         <div>
           <div class="filter-label">Program</div>
           <div class="chip-row" id="programChips"></div>
@@ -1093,8 +1094,10 @@
       courseSelect.appendChild(opt);
     });
     // this file format has no course/module granularity — nothing to filter by
-    document.getElementById("moduleFilterBlock").style.display = allCourses.length ? "block" : "none";
-    if (!allCourses.length) filters.course = "all";
+    const hasModules = allCourses.length > 0;
+    document.getElementById("moduleFilterBlock").style.display = hasModules ? "block" : "none";
+    document.getElementById("filterGrid").classList.toggle("no-module", !hasModules);
+    if (!hasModules) filters.course = "all";
 
     const dirCountrySelect = document.getElementById("directoryCountryFilter");
     dirCountrySelect.innerHTML = '<option value="all">All countries</option>';
