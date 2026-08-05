@@ -369,6 +369,7 @@
         <div class="date-dropdown-panel" id="dateDropdownPanel" style="display:none"></div>
       </div>
       <div id="trendWrap" style="display:none; margin-top:16px;">
+        <div id="trendFilterNote" class="sub" style="display:none; margin-bottom:10px;"></div>
         <div class="chart-box chart-box-md"><canvas id="trendChart"></canvas></div>
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
@@ -764,7 +765,8 @@
         date: dateStr, publishedAt: publishedAt.toISOString(),
         totals: computeTotals(learners),
         gender: Object.fromEntries(computeGenderCounts(learners)),
-        byCountry: Object.fromEntries(computeCountryAgg(learners))
+        byCountry: Object.fromEntries(computeCountryAgg(learners)),
+        byProgram: Object.fromEntries(computeProgramAgg(learners))
       }
     });
 
@@ -862,7 +864,54 @@
     });
   }
 
+  // country and program breakdowns are stored separately in each agg file, so
+  // combining both filters at once can't be derived accurately from aggregates
+  // alone — country takes priority when both are active, and a note explains it
+  function filteredTrendTotals(payload){
+    const hasCountry = filters.countries.size > 0;
+    const hasProgram = filters.programs.size > 0;
+    if (!hasCountry && !hasProgram) return { totals: payload.totals, limited: false };
+
+    if (hasCountry){
+      if (!payload.byCountry) return { totals: payload.totals, limited: true };
+      let enrolled=0, activated=0, paid=0;
+      filters.countries.forEach(c => {
+        const v = payload.byCountry[c];
+        if (v){ enrolled+=v.enrolled; activated+=v.activated; paid+=v.paid; }
+      });
+      return { totals: {enrolled,activated,paid}, limited: hasProgram };
+    }
+    if (!payload.byProgram) return { totals: payload.totals, limited: true };
+    let enrolled=0, activated=0, paid=0;
+    filters.programs.forEach(pr => {
+      const v = payload.byProgram[pr];
+      if (v){ enrolled+=v.enrolled; activated+=v.activated; paid+=v.paid; }
+    });
+    return { totals: {enrolled,activated,paid}, limited: false };
+  }
+
+  function refreshTrendIfVisible(){
+    if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
+  }
+
   function renderTrend(dates, payloads){
+    const filtered = payloads.map(filteredTrendTotals);
+    const totalsList = filtered.map(f => f.totals);
+    const anyLimited = filtered.some(f => f.limited);
+
+    const noteEl = document.getElementById("trendFilterNote");
+    if (filters.countries.size || filters.programs.size){
+      let msg = "Reflecting your Program/Country filters where possible.";
+      if (filters.countries.size && filters.programs.size) msg = "Both Program and Country filters are active — this chart applies the Country filter only (can't combine both from published history).";
+      else if (filters.countries.size) msg = "Filtered to: " + [...filters.countries].join(", ") + ".";
+      else if (filters.programs.size) msg = "Filtered to: " + [...filters.programs].join(", ") + ".";
+      if (anyLimited) msg += " Some older dates were published before this filter data existed, so they show unfiltered totals.";
+      noteEl.textContent = msg;
+      noteEl.style.display = "block";
+    } else {
+      noteEl.style.display = "none";
+    }
+
     const c = chartColors();
     if (trendChartRef) trendChartRef.destroy();
     trendChartRef = new Chart(document.getElementById("trendChart"), {
@@ -870,9 +919,9 @@
       data: {
         labels: dates,
         datasets: [
-          { label:"Enrolled", data: payloads.map(p=>p.totals.enrolled), borderColor: c.text, backgroundColor: c.text, tension:0.25 },
-          { label:"Activated", data: payloads.map(p=>p.totals.activated), borderColor: c.activated, backgroundColor: c.activated, tension:0.25 },
-          { label:"Paid", data: payloads.map(p=>p.totals.paid), borderColor: c.paid, backgroundColor: c.paid, tension:0.25 }
+          { label:"Enrolled", data: totalsList.map(t=>t.enrolled), borderColor: c.text, backgroundColor: c.text, tension:0.25 },
+          { label:"Activated", data: totalsList.map(t=>t.activated), borderColor: c.activated, backgroundColor: c.activated, tension:0.25 },
+          { label:"Paid", data: totalsList.map(t=>t.paid), borderColor: c.paid, backgroundColor: c.paid, tension:0.25 }
         ]
       },
       options: {
@@ -888,18 +937,18 @@
     const fmtDelta = (v) => v===null ? "—" : (v>0 ? "+"+v.toLocaleString() : v.toLocaleString());
     const tbody = document.getElementById("trendTableBody");
     tbody.innerHTML = "";
-    payloads.forEach((p, i) => {
-      const prev = i>0 ? payloads[i-1] : null;
-      const deltaEnrolled = prev ? p.totals.enrolled - prev.totals.enrolled : null;
-      const deltaPaid = prev ? p.totals.paid - prev.totals.paid : null;
-      const convE = p.totals.enrolled ? (p.totals.paid/p.totals.enrolled*100).toFixed(1) : "0.0";
-      const convA = p.totals.paid ? (p.totals.activated/p.totals.paid*100).toFixed(1) : "0.0";
+    totalsList.forEach((t, i) => {
+      const prev = i>0 ? totalsList[i-1] : null;
+      const deltaEnrolled = prev ? t.enrolled - prev.enrolled : null;
+      const deltaPaid = prev ? t.paid - prev.paid : null;
+      const convE = t.enrolled ? (t.paid/t.enrolled*100).toFixed(1) : "0.0";
+      const convA = t.paid ? (t.activated/t.paid*100).toFixed(1) : "0.0";
       const tr = document.createElement("tr");
       tr.innerHTML =
         "<td>"+escapeHtml(dates[i])+"</td>" +
-        "<td>"+p.totals.enrolled.toLocaleString()+"</td>" +
-        "<td>"+p.totals.activated.toLocaleString()+"</td>" +
-        "<td>"+p.totals.paid.toLocaleString()+"</td>" +
+        "<td>"+t.enrolled.toLocaleString()+"</td>" +
+        "<td>"+t.activated.toLocaleString()+"</td>" +
+        "<td>"+t.paid.toLocaleString()+"</td>" +
         "<td>"+convE+"%</td>" +
         "<td>"+convA+"%</td>" +
         "<td>"+fmtDelta(deltaEnrolled)+"</td>" +
@@ -1174,6 +1223,7 @@
       if (setName === "countries") syncCountryDropdown();
       page = 1;
       renderAll();
+      refreshTrendIfVisible();
     });
     return el;
   }
@@ -1188,6 +1238,7 @@
       chip.classList.toggle("active", filters.countries.has(chip.textContent));
     });
     page = 1; renderAll();
+    refreshTrendIfVisible();
   });
   document.getElementById("searchBox").addEventListener("input", e => {
     filters.search = e.target.value.trim().toLowerCase(); page = 1; renderTable();
@@ -1199,6 +1250,7 @@
     document.getElementById("directoryCountryFilter").value = "all";
     document.querySelectorAll(".chip.active").forEach(c => c.classList.remove("active"));
     page = 1; renderAll();
+    refreshTrendIfVisible();
   });
 
   document.getElementById("rankMetric").addEventListener("change", () => {
@@ -1368,6 +1420,18 @@
     return agg;
   }
 
+  function computeProgramAgg(rows){
+    const agg = new Map();
+    rows.forEach(L => {
+      L.programs.forEach(p => {
+        let g = agg.get(p.program);
+        if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(p.program, g); }
+        g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
+      });
+    });
+    return agg;
+  }
+
   function renderBarChart(groups){
     const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0)
       .sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
@@ -1456,6 +1520,7 @@
           });
           syncCountryDropdown();
           page = 1; renderAll();
+          refreshTrendIfVisible();
         });
       }
 
