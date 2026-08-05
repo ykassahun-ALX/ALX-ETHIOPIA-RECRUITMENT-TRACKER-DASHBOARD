@@ -152,6 +152,29 @@
   @media (max-width: 900px){ .filter-grid{ grid-template-columns: 1fr; } }
   .filter-label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color: var(--muted); font-weight:600; margin-bottom:8px; }
   .chip-row{ display:flex; flex-wrap:wrap; gap:6px; }
+
+  .date-dropdown{ position:relative; display:inline-block; }
+  .date-dropdown-trigger{
+    display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; color:var(--ink);
+    cursor:pointer; font-family:inherit; min-width:220px; justify-content:space-between;
+  }
+  .date-dropdown-trigger:hover{ border-color: var(--accent); }
+  .date-dropdown-caret{ color:var(--muted); font-size:11px; }
+  .date-dropdown-panel{
+    position:absolute; top:calc(100% + 6px); left:0; z-index:50; min-width:240px; max-height:280px;
+    overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    box-shadow: var(--shadow); padding:6px;
+  }
+  .date-dropdown-row{
+    display:flex; align-items:center; gap:9px; padding:7px 8px; border-radius:6px; cursor:pointer; font-size:13px;
+  }
+  .date-dropdown-row:hover{ background: var(--surface-alt); }
+  .date-dropdown-row input{ margin:0; accent-color: var(--accent); }
+  .date-dropdown-row.latest .date-dropdown-tag{
+    font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
+    background:var(--surface-alt); border-radius:4px; padding:1px 5px; margin-left:auto;
+  }
   .chip{
     border:1px solid var(--border); background:var(--surface); border-radius:999px;
     padding:5px 12px; font-size:12.5px; cursor:pointer; color:var(--muted);
@@ -336,9 +359,15 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Pick 2 or more dates to compare day-over-day change. Everything below reflects the most recent date selected.</span>
+        <span class="sub">Pick 2 or more dates to compare day-over-day change. The main dashboard above always shows the latest date — this section is just for historical comparison.</span>
       </div>
-      <div class="chip-row" id="dateChips"></div>
+      <div class="date-dropdown" id="dateDropdown">
+        <button type="button" id="dateDropdownTrigger" class="date-dropdown-trigger">
+          <span id="dateDropdownLabel">Select dates…</span>
+          <span class="date-dropdown-caret">▾</span>
+        </button>
+        <div class="date-dropdown-panel" id="dateDropdownPanel" style="display:none"></div>
+      </div>
       <div id="trendWrap" style="display:none; margin-top:16px;">
         <div class="chart-box chart-box-md"><canvas id="trendChart"></canvas></div>
         <div style="overflow-x:auto; margin-top:14px;">
@@ -769,31 +798,49 @@
   }
 
   function buildDateChips(){
-    const wrap = document.getElementById("dateChips");
-    wrap.innerHTML = "";
-    availableDates.forEach(date => {
-      const el = document.createElement("div");
-      el.className = "chip";
-      el.textContent = date;
-      el.dataset.date = date;
-      el.addEventListener("click", () => {
-        if (selectedDates.has(date)){
-          if (selectedDates.size > 1) selectedDates.delete(date); // always keep >=1 selected
-        } else {
-          selectedDates.add(date);
-        }
-        updateDateChipUI();
+    const trigger = document.getElementById("dateDropdownTrigger");
+    const panel = document.getElementById("dateDropdownPanel");
+    const latest = availableDates[availableDates.length - 1];
+
+    panel.innerHTML = "";
+    // most recent first — that's what people will want to find as the list grows
+    [...availableDates].reverse().forEach(date => {
+      const row = document.createElement("label");
+      row.className = "date-dropdown-row" + (date === latest ? " latest" : "");
+      row.innerHTML =
+        '<input type="checkbox" data-date="' + date + '" ' + (selectedDates.has(date) ? "checked" : "") + ' />' +
+        '<span>' + escapeHtml(date) + '</span>' +
+        (date === latest ? '<span class="date-dropdown-tag">Latest</span>' : '');
+      panel.appendChild(row);
+    });
+
+    panel.querySelectorAll("input[type=checkbox]").forEach(cb => {
+      cb.addEventListener("change", (e) => {
+        const date = e.target.dataset.date;
+        if (e.target.checked) selectedDates.add(date);
+        else if (selectedDates.size > 1) selectedDates.delete(date); // always keep >=1 selected
+        else e.target.checked = true; // block unchecking the last remaining date
+        updateDateDropdownLabel();
         loadAndRenderSelectedDates();
       });
-      wrap.appendChild(el);
     });
-    updateDateChipUI();
+
+    trigger.onclick = (e) => {
+      e.stopPropagation();
+      panel.style.display = panel.style.display === "block" ? "none" : "block";
+    };
+    document.addEventListener("click", (e) => {
+      if (!document.getElementById("dateDropdown").contains(e.target)) panel.style.display = "none";
+    });
+
+    updateDateDropdownLabel();
     document.getElementById("snapshotsSection").style.display = "block";
   }
-  function updateDateChipUI(){
-    document.querySelectorAll("#dateChips .chip").forEach(chip => {
-      chip.classList.toggle("active", selectedDates.has(chip.dataset.date));
-    });
+
+  function updateDateDropdownLabel(){
+    const label = document.getElementById("dateDropdownLabel");
+    const sorted = [...selectedDates].sort();
+    label.textContent = sorted.length === 1 ? sorted[0] : sorted.length + " dates selected";
   }
 
   // drives ONLY the historical trend chart/table — the main dashboard (stat
