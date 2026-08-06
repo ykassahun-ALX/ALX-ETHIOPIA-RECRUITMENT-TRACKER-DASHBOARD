@@ -712,6 +712,14 @@
   const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
   let datePartsMap = new Map(); // date -> number of parts published for that date
 
+  // GitHub Pages' CDN can keep serving a stale copy of a file for several
+  // minutes after a new commit, even though cache:"no-store" already stops the
+  // browser's OWN cache from being the problem. Appending a changing query
+  // string forces every fetch to be treated as a new, uncached URL.
+  function noCacheUrl(url){
+    return url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
+  }
+
   function todayDateString(){
     const d = new Date();
     return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
@@ -770,7 +778,7 @@
       }
     });
 
-    fetch("snapshots-index.json", { cache: "no-store" })
+    fetch(noCacheUrl("snapshots-index.json"), { cache: "no-store" })
       .then(res => res.ok ? res.json() : { dates: [] })
       .catch(() => ({ dates: [] }))
       .then(indexPayload => {
@@ -794,7 +802,7 @@
   // ---- lightweight aggregate loader (for the historical trend chart only) ----
   function loadAgg(date){
     if (snapshotsCache.has(date)) return Promise.resolve(snapshotsCache.get(date));
-    return fetch("agg-" + date + ".json", { cache: "no-store" })
+    return fetch(noCacheUrl("agg-" + date + ".json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("missing " + date); return res.json(); })
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
   }
@@ -965,7 +973,7 @@
     const fetches = [];
     for (let p = 1; p <= parts; p++){
       fetches.push(
-        fetch("data-" + date + "-part" + p + ".json", { cache: "no-store" })
+        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
           .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
       );
     }
@@ -985,7 +993,7 @@
   // Silently does nothing if it's missing (first-ever run) or unreachable (e.g.
   // opened as a local file, or inside this preview sandbox, where fetch is blocked).
   function loadSnapshotsIndex(){
-    fetch("snapshots-index.json", { cache: "no-store" })
+    fetch(noCacheUrl("snapshots-index.json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("no index"); return res.json(); })
       .then(indexPayload => {
         if (!indexPayload || !Array.isArray(indexPayload.dates) || !indexPayload.dates.length) throw new Error("empty index");
@@ -1003,7 +1011,7 @@
 
   // backward compatibility with the older aggregate-only single-file format
   function tryLoadLegacySnapshot(){
-    fetch("data.json", { cache: "no-store" })
+    fetch(noCacheUrl("data.json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("no snapshot"); return res.json(); })
       .then(payload => {
         if (!payload || !payload.totals || !payload.byCountry) return;
@@ -1166,7 +1174,7 @@
       countryCount.set(L.country, (countryCount.get(L.country)||0)+1);
     }
     allPrograms = [...progCount.keys()].sort((a,b)=>progCount.get(b)-progCount.get(a));
-    allCountries = [...countryCount.keys()].sort((a,b)=>countryCount.get(b)-countryCount.get(a));
+    allCountries = [...countryCount.keys()].filter(c => c !== "Other").sort((a,b)=>countryCount.get(b)-countryCount.get(a));
     allCourses = [...courseSet].sort();
 
     buildFilterUI();
@@ -1413,6 +1421,7 @@
   function computeCountryAgg(rows){
     const agg = new Map();
     rows.forEach(L => {
+      if (L.country === "Other") return; // keep country views scoped to the 8 hub countries
       let g = agg.get(L.country);
       if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(L.country, g); }
       g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
