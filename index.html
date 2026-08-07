@@ -352,10 +352,6 @@
 
   <div id="dashboardBody">
 
-    <div class="card" id="publicNotice" style="display:none; background:var(--surface-alt); font-size:12.5px; color:var(--muted);">
-      This dashboard, including individual learner names, emails, and payment status, is visible to anyone with this link — it is not restricted to admins. Sign in as Admin only to upload new data.
-    </div>
-
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
@@ -670,13 +666,9 @@
     emptyStateAdmin.style.display = (!hasData && isAdmin) ? "block" : "none";
     emptyStatePublic.style.display = (!hasData && !isAdmin) ? "block" : "none";
   }
-  function updatePublicNoticeVisibility(){
-    document.getElementById("publicNotice").style.display = (isAdmin || !learners.length) ? "none" : "block";
-  }
   function setAdmin(next){
     isAdmin = next;
     uploadCard.style.display = isAdmin ? "block" : "none";
-    updatePublicNoticeVisibility();
     viewExecutiveBtn.classList.toggle("active", !isAdmin);
     viewAdminBtn.classList.toggle("active", isAdmin);
     updateEmptyState();
@@ -1317,7 +1309,6 @@
     if (!learners.length) return;
     viewMode = "full";
     dashboardBody.style.display = "block";
-    updatePublicNoticeVisibility();
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
     const filtered = getFiltered();
@@ -1335,7 +1326,6 @@
     viewMode = "summary";
     publishedAgg = payload;
     dashboardBody.style.display = "block";
-    document.getElementById("publicNotice").style.display = "block";
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
     renderStats(payload.totals);
