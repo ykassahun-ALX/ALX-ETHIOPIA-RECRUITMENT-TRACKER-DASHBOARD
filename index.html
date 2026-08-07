@@ -288,17 +288,32 @@
   #dashboardBody{ display:none; }
 
   .modal-overlay{
-    position:fixed; inset:0; background:rgba(10,18,14,0.5);
+    position:fixed; inset:0; background:rgba(10,10,10,0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px;
+    animation: modalFadeIn .18s ease;
   }
+  @keyframes modalFadeIn{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes modalPopIn{ from{ opacity:0; transform: translateY(6px) scale(.97); } to{ opacity:1; transform: translateY(0) scale(1); } }
   .modal-box{
-    background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
-    box-shadow: var(--shadow); padding:22px; width:320px; max-width:100%;
+    background: var(--surface); border:1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.1);
+    padding:28px; width:340px; max-width:100%;
+    animation: modalPopIn .22s cubic-bezier(.2,.9,.3,1.2);
   }
-  .modal-box h3{ font-size:15px; margin-bottom:14px; }
-  .modal-box input{ margin-bottom:6px; }
-  .modal-error{ color: var(--danger); font-size:12px; min-height:16px; margin-bottom:8px; }
-  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+  .modal-icon{
+    width:44px; height:44px; border-radius:12px; background: var(--accent); color: var(--accent-contrast);
+    display:flex; align-items:center; justify-content:center; font-size:19px; margin-bottom:16px;
+  }
+  .modal-box h3{ font-family:"Space Grotesk", "Segoe UI", system-ui, sans-serif; font-size:18px; margin-bottom:4px; letter-spacing:-0.01em; }
+  .modal-subtitle{ font-size:12.5px; color:var(--muted); margin-bottom:18px; }
+  .modal-box input{
+    margin-bottom:6px; width:100%; padding:11px 13px; border-radius:9px;
+    border:1.5px solid var(--border); font-size:14px; transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .modal-box input:focus{ outline:none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .modal-error{ color: var(--danger); font-size:12px; min-height:16px; margin-bottom:4px; display:flex; align-items:center; gap:5px; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+  .modal-actions .btn, .modal-actions .btn.secondary{ padding:9px 16px; border-radius:9px; }
   .toast{
     position:fixed; bottom:22px; right:22px; max-width:340px;
     background: var(--ink); color: var(--bg); padding:12px 16px; border-radius:8px;
@@ -520,7 +535,9 @@
 
 <div class="modal-overlay" id="modalOverlay" style="display:none">
   <div class="modal-box">
+    <div class="modal-icon">🔒</div>
     <h3 id="modalTitle">Admin sign-in</h3>
+    <div class="modal-subtitle" id="modalSubtitle">Enter the admin password to upload and publish new data.</div>
     <div id="modalBody"></div>
     <div class="modal-actions">
       <button class="btn secondary" id="modalCancel">Cancel</button>
@@ -651,7 +668,7 @@
         closeModal();
         showToast("Signed in as admin.");
       } else {
-        errorEl.textContent = "That password doesn't match.";
+        errorEl.innerHTML = "⚠ That password doesn't match.";
         input.value = "";
         input.focus();
       }
@@ -1477,7 +1494,7 @@
     const metric = document.getElementById("rankMetric").value;
     list.sort((a,b) => b[metric] - a[metric]);
 
-    const maxEnrolled = Math.max(...list.map(c=>c.enrolled), 1);
+    const maxMetric = Math.max(...list.map(c=>c[metric]), 0.0001);
     const board = document.getElementById("scoreboard");
     board.innerHTML =
       '<div class="lane-head">' +
@@ -1489,9 +1506,19 @@
     list.forEach((c, i) => {
       const lane = document.createElement("div");
       lane.className = "lane";
-      const barWidth = (c.enrolled / maxEnrolled) * 100;
-      const actWidth = c.enrolled ? (c.activated / c.enrolled) * 100 : 0;
-      const paidWidth = c.enrolled ? (c.paid / c.enrolled) * 100 : 0;
+      // bar length always matches whatever's selected in "Rank by", so the
+      // visual order lines up with the row order regardless of metric
+      const barWidth = (c[metric] / maxMetric) * 100;
+      let trackInner;
+      if (metric === "enrolled"){
+        // the one case with enough shared scale to show the activated/paid funnel inside the bar
+        const actWidth = c.enrolled ? (c.activated / c.enrolled) * 100 : 0;
+        const paidWidth = c.enrolled ? (c.paid / c.enrolled) * 100 : 0;
+        trackInner = '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
+                     '<div class="seg-paid" style="width:'+paidWidth.toFixed(1)+'%"></div>';
+      } else {
+        trackInner = '<div class="seg-paid" style="width:100%"></div>';
+      }
       const checkboxHtml = interactive
         ? '<div class="lane-checkbox"><input type="checkbox" title="Add to country filter" '+(filters.countries.has(c.country)?"checked":"")+' /></div>'
         : '<div class="lane-checkbox"></div>';
@@ -1500,8 +1527,7 @@
         '<div class="rank">'+(i+1)+'</div>' +
         '<div class="lane-country">'+escapeHtml(c.country)+'</div>' +
         '<div class="lane-track-wrap"><div class="track" style="width:'+barWidth.toFixed(1)+'%">' +
-          '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
-          '<div class="seg-paid" style="width:'+paidWidth.toFixed(1)+'%"></div>' +
+          trackInner +
         '</div></div>' +
         '<div class="lane-numbers">' +
           '<span><b>'+c.enrolled.toLocaleString()+'</b></span>' +
