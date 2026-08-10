@@ -1367,11 +1367,11 @@
     const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
     document.getElementById("statActivated").textContent = activated.toLocaleString();
-    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled";
+    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
-    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled · " + pct(paid,activated) + "% of activated";
+    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
     document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled";
+    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
   }
 
