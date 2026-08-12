@@ -198,13 +198,20 @@
   .stat-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:16px; }
   @media (max-width: 1100px){ .stat-grid{ grid-template-columns: repeat(3,1fr);} }
   @media (max-width: 640px){ .stat-grid{ grid-template-columns: repeat(2,1fr);} }
-  .stat-card{ background:var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:18px; box-shadow: var(--shadow); }
-  .stat-card .label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; }
+  .stat-card{ position:relative; background:var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding:18px; box-shadow: var(--shadow); }
+  .stat-card .label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; padding-right:22px; }
   .stat-card .value{ font-size:28px; font-weight:700; margin-top:6px; color: var(--ink); }
   .stat-card .footnote{ font-size:12px; color:var(--muted); margin-top:4px; }
   .stat-card.accent{ border-left: 4px solid var(--accent); }
   .stat-card.blue{ border-left: 4px solid var(--activated); }
   .stat-card.warn{ border-left: 4px solid var(--warn); }
+  .stat-export-btn{
+    position:absolute; top:14px; right:14px; width:22px; height:22px; border-radius:6px;
+    background:var(--surface-alt); border:1px solid var(--border); color:var(--muted);
+    font-size:11px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    padding:0; line-height:1;
+  }
+  .stat-export-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
 
   /* ---------- Charts row ---------- */
   .charts-row{ display:grid; grid-template-columns: 1fr 1.6fr; gap:18px; }
@@ -431,26 +438,31 @@
     <section>
       <div class="stat-grid">
         <div class="stat-card accent">
+          <button class="stat-export-btn" data-metric="enrolled" title="Export enrolled learners (CSV)">⬇</button>
           <div class="label">Enrolled learners</div>
           <div class="value num" id="statEnrolled">0</div>
           <div class="footnote">matching current filters</div>
         </div>
         <div class="stat-card blue">
+          <button class="stat-export-btn" data-metric="activated" title="Export activated learners (CSV)">⬇</button>
           <div class="label">Activated</div>
           <div class="value num" id="statActivated">0</div>
           <div class="footnote" id="statActivatedPct">0% of enrolled</div>
         </div>
         <div class="stat-card accent">
+          <button class="stat-export-btn" data-metric="paid" title="Export paid learners (CSV)">⬇</button>
           <div class="label">Paid</div>
           <div class="value num" id="statPaid">0</div>
           <div class="footnote" id="statPaidPct">0% of enrolled · 0% of activated</div>
         </div>
         <div class="stat-card blue">
+          <button class="stat-export-btn" data-metric="graduated" title="Export graduated learners (CSV)">⬇</button>
           <div class="label">Graduated</div>
           <div class="value num" id="statGraduated">0</div>
           <div class="footnote" id="statGraduatedPct">0% of enrolled</div>
         </div>
         <div class="stat-card warn">
+          <button class="stat-export-btn" data-metric="multi" title="Export multi-program learners (CSV)">⬇</button>
           <div class="label">Multi-program learners</div>
           <div class="value num" id="statMulti">0</div>
           <div class="footnote">enrolled in 2+ programs</div>
@@ -575,6 +587,7 @@
   let allCourses = [];         // sorted list of "Program — Course" strings
   const filters = { programs: new Set(), countries: new Set(), course: "all", search: "" };
   let filtersEnabled = true;
+  let lastTotals = null;
   let page = 1;
   const PAGE_SIZE = 50;
   let genderChartRef = null;
@@ -1332,8 +1345,8 @@
   document.getElementById("prevPage").addEventListener("click", () => { if (page>1){ page--; renderTable(); }});
   document.getElementById("nextPage").addEventListener("click", () => { page++; renderTable(); });
 
-  document.getElementById("exportBtn").addEventListener("click", () => {
-    const rows = getFiltered();
+  // shared builder — reused by the directory export and each per-card export below
+  function learnersToCsv(rows){
     const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status","Activated","Paid"];
     const lines = [header.join(",")];
     rows.forEach(L => {
@@ -1343,12 +1356,44 @@
       const cells = [L.email, L.first, L.last, L.gender, L.country, L.programs.length, progs, mods, healths, L.activated?"Yes":"No", L.paid?"Yes":"No"];
       lines.push(cells.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(","));
     });
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    return lines.join("\n");
+  }
+  function downloadCsvBlob(csvText, filename){
+    const blob = new Blob([csvText], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "learner_outreach_export.csv";
+    a.href = url; a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    downloadCsvBlob(learnersToCsv(getFiltered()), "learner_outreach_export.csv");
+  });
+
+  const STAT_METRIC_FILTERS = {
+    enrolled: rows => rows,
+    activated: rows => rows.filter(r => r.activated),
+    paid: rows => rows.filter(r => r.paid),
+    graduated: rows => rows.filter(r => r.graduated),
+    multi: rows => rows.filter(r => r.multi)
+  };
+  document.querySelectorAll(".stat-export-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!learners.length){
+        showToast("Load data first, then export.");
+        return;
+      }
+      const metric = btn.dataset.metric;
+      const rows = STAT_METRIC_FILTERS[metric](getFiltered());
+      if (!rows.length){
+        showToast("No " + metric + " learners match the current filters.");
+        return;
+      }
+      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + "_" + todayDateString() + ".csv");
+      showToast("Downloaded " + rows.length.toLocaleString() + " " + metric + " learner" + (rows.length===1?"":"s") + " (CSV).");
+    });
   });
 
   // ---------------- Filtering ----------------
@@ -1419,6 +1464,7 @@
   }
 
   function renderStats(totals){
+    lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
     document.getElementById("statActivated").textContent = activated.toLocaleString();
