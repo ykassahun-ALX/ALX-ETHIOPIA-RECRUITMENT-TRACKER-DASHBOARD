@@ -1601,6 +1601,7 @@
     list.sort((a,b) => b[metric] - a[metric]);
 
     const maxMetric = Math.max(...list.map(c=>c[metric]), 0.0001);
+    const totalEnrolledAllCountries = list.reduce((sum, c) => sum + c.enrolled, 0) || 1;
     const board = document.getElementById("scoreboard");
     board.innerHTML =
       '<div class="lane-head">' +
