@@ -441,7 +441,7 @@
           <button class="stat-export-btn" data-metric="enrolled" title="Export enrolled learners (CSV)">⬇</button>
           <div class="label">Enrolled learners</div>
           <div class="value num" id="statEnrolled">0</div>
-          <div class="footnote">matching current filters</div>
+          <div class="footnote" id="statEnrolledPct">matching current filters</div>
         </div>
         <div class="stat-card blue">
           <button class="stat-export-btn" data-metric="activated" title="Export activated learners (CSV)">⬇</button>
@@ -1467,6 +1467,10 @@
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
+    const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
+    document.getElementById("statEnrolledPct").textContent = anyFilterActive
+      ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
+      : "matching current filters";
     document.getElementById("statActivated").textContent = activated.toLocaleString();
     document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
