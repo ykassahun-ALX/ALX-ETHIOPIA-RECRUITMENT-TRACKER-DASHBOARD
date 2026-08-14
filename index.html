@@ -1463,18 +1463,33 @@
     };
   }
 
-  function renderStats(totals){
+  ffunction renderStats(totals){
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
+    
+    // 1. Update Enrolled main number
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
+
+    // 2. NEW: Update Enrolled footnote with percentage
+    const GRAND_TOTAL = 120017; // Total before filters (change this to your total number or variable)
+    const subElem = document.getElementById("statEnrolledSub");
+    if (subElem) {
+        if (enrolled === GRAND_TOTAL) {
+            subElem.textContent = "matching current filters";
+        } else {
+            subElem.textContent = pct(enrolled, GRAND_TOTAL) + "% of total enrolled";
+        }
+    }
+
+    // 3. Keep all your existing cards intact
     document.getElementById("statActivated").textContent = activated.toLocaleString();
     document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
     document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
     document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
+    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of paid";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
-  }
+}
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
 
