@@ -1637,7 +1637,7 @@
           trackInner +
         '</div></div>' +
         '<div class="lane-numbers">' +
-          '<span><b>'+c.enrolled.toLocaleString()+'</b></span>' +
+          '<span><b>'+c.enrolled.toLocaleString()+'</b><span style="display:block;font-weight:400;color:var(--muted);font-size:10.5px;">'+((c.enrolled/totalEnrolledAllCountries)*100).toFixed(1)+'% of total</span></span>' +
           '<span><b>'+c.paid.toLocaleString()+'</b></span>' +
           '<span><b>'+(c.convEnrolled*100).toFixed(1)+'%</b></span>' +
           '<span><b>'+(c.convActivated*100).toFixed(1)+'%</b></span>' +
