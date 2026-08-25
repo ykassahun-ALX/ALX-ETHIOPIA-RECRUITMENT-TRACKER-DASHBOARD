@@ -855,11 +855,17 @@
   let selectedSprint = "all";
   function getSprintInfo(dateStr){
     const [year, month] = dateStr.split("-").map(Number);
-    let sprintNum, label;
-    if (month <= 4){ sprintNum = 1; label = "Jan–Apr"; }
-    else if (month <= 8){ sprintNum = 2; label = "May–Aug"; }
-    else { sprintNum = 3; label = "Sep–Dec"; }
-    return { year, sprintNum, key: year + "-S" + sprintNum, label: year + " · " + label };
+    let sprintNum, range;
+    if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
+    else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
+    else { sprintNum = 3; range = "Sep–Dec"; }
+    // key always includes the year so sprints from different years never merge.
+    // The label drops the year when a specific year is already chosen via the
+    // year filter (redundant otherwise); it's added back only under "All years",
+    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
+    const shortLabel = "Sprint " + sprintNum + ": " + range;
+    const longLabel = year + " · " + shortLabel;
+    return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
   }
   function buildYearOptions(){
     const sel = document.getElementById("yearFilter");
@@ -881,7 +887,7 @@
     availableDates.forEach(d => {
       const s = getSprintInfo(d);
       if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
-      seen.set(s.key, s.label);
+      seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
     });
     const keys = [...seen.keys()].sort();
     const prevValue = sel.value;
