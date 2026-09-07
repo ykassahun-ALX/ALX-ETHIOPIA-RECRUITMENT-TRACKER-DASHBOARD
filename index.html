@@ -367,8 +367,8 @@
 
   <section id="uploadCard" class="card" style="display:none">
     <div class="section-head">
-      <h2>Upload full CSV &amp; publish Sprint snapshot</h2>
-      <span class="sub">Upload the full, unfiltered CSV. The CSV does not need a date — choose the reporting Year and Sprint when publishing.</span>
+      <h2>Upload weekly export</h2>
+      <span class="sub">The dashboard updates automatically the moment a file is selected — no processing button needed.</span>
     </div>
     <div class="dropzone" id="dropzone">
       <div><strong>Drag &amp; drop your CSV here</strong>, or click to choose a file</div>
@@ -377,8 +377,8 @@
     </div>
     <div id="fileStatus"><span class="spinner" id="spinner"></span><span id="fileStatusText">No file loaded yet.</span></div>
     <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-      <span class="sub">Choose the reporting period explicitly. The upload date is only the technical publish date and never determines the Sprint.</span>
-      <button class="btn secondary" id="publishBtn">Publish Sprint snapshot</button>
+      <span class="sub">Publish this data so it shows up automatically for everyone else who opens the link — see the note below.</span>
+      <button class="btn secondary" id="publishBtn">Publish snapshot (data.json)</button>
     </div>
   </section>
 
@@ -386,8 +386,8 @@
 
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
-        <h2>Sprint snapshots</h2>
-        <span class="sub">Choose a reporting Year and Sprint. The dashboard loads the cumulative state at the end of that Sprint. The technical publish date does not change the reporting period.</span>
+        <h2>Daily snapshots</h2>
+        <span class="sub">Pick a year/sprint to scope the whole dashboard to that window. Pick 2+ individual dates below to compare day-over-day change.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <select id="yearFilter" style="max-width:120px">
@@ -410,7 +410,7 @@
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
             <thead>
-              <tr><th>Reporting period</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
+              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
@@ -604,9 +604,8 @@
   let genderChartRef = null;
   let barChartRef = null;
   let trendChartRef = null;
-  let availableDates = [];          // technical snapshot dates used as file identifiers
-  let snapshotEntries = [];          // published snapshot metadata, including reporting Year/Sprint
-  let selectedDates = new Set();     // technical dates currently chosen for comparison
+  let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
+  let selectedDates = new Set();    // dates currently chosen for comparison
   const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
   let lastTrendDates = null;        // for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
@@ -743,7 +742,7 @@
     if (!isAdmin) openAdminPasswordModal();
   });
 
-  // ---------------- Publish / load shareable, Sprint snapshots ----------------
+  // ---------------- Publish / load shareable, dated snapshots ----------------
   // Static hosting (like GitHub Pages) has no database, so the only way for OTHER
   // people opening the link to see the same data — without uploading the CSV
   // themselves — is for the admin to publish files that sit next to this HTML
@@ -757,16 +756,15 @@
   // changes, only the payload built below needs to go back to aggregate-only.
   //
   // Because full per-learner data for tens of thousands of learners is well
-  // over GitHub's 25MB drag-and-drop upload limit, each published Sprint snapshot is split
+  // over GitHub's 25MB drag-and-drop upload limit, each day's publish is split
   // into multiple part files (data-YYYY-MM-DD-partN.json) sized safely under
   // that limit. A small snapshots-index.json records, per date, how many parts
   // exist, so the page knows how many files to fetch and stitch back together.
   // A separate, tiny agg-YYYY-MM-DD.json (totals/gender/country only) is also
-  // published per snapshot — that one powers the lightweight historical trend
+  // published per day — that one is what powers the lightweight multi-day trend
   // comparison, without needing to download every historical day's full data.
   const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
-  let datePartsMap = new Map(); // technical date -> number of parts
-  let snapshotMetaMap = new Map(); // technical date -> reporting metadata
+  let datePartsMap = new Map(); // date -> number of parts published for that date
 
   // GitHub Pages' CDN can keep serving a stale copy of a file for several
   // minutes after a new commit, even though cache:"no-store" already stops the
@@ -802,119 +800,31 @@
     next();
   }
 
-  // ---------------- Sprint snapshot publishing ----------------
-  // IMPORTANT: the CSV itself has no reporting date. The admin explicitly chooses
-  // the reporting Year + Sprint. The actual browser/upload date is stored only as
-  // publishedAt and NEVER used to decide which Sprint the data belongs to.
-  function sprintDefinition(sprintNum){
-    if (String(sprintNum) === "1") return { sprint:1, range:"Jan–Apr", end:"04-30" };
-    if (String(sprintNum) === "2") return { sprint:2, range:"May–Aug", end:"08-31" };
-    return { sprint:3, range:"Sep–Dec", end:"12-31" };
-  }
-
-  function availableReportingYears(){
-    const years = new Set();
-    snapshotEntries.forEach(e => {
-      const info = getSprintInfo(e.date);
-      if (info.year) years.add(String(info.year));
-    });
-    const now = new Date();
-    years.add(String(now.getFullYear()));
-    return [...years].sort((a,b) => Number(a)-Number(b));
-  }
-
-  function openPublishPeriodModal(){
+  document.getElementById("publishBtn").addEventListener("click", () => {
     if (!learners.length){
-      showToast("Load the full CSV first, then publish the Sprint snapshot.");
+      showToast("Load a CSV first, then publish the snapshot.");
       return;
     }
-
-    modalTitle.textContent = "Publish Sprint snapshot";
-    modalBody.innerHTML =
-      '<div class="modal-subtitle" style="margin-bottom:12px;">' +
-        'This CSV has no embedded date. Select the reporting period that this full dataset represents.' +
-      '</div>' +
-      '<label style="display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:6px;">Reporting year</label>' +
-      '<select id="publishYear" style="margin-bottom:12px;"></select>' +
-      '<label style="display:block; font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:6px;">Reporting sprint</label>' +
-      '<select id="publishSprint" style="margin-bottom:8px;">' +
-        '<option value="1">Sprint 1 — Jan–Apr</option>' +
-        '<option value="2">Sprint 2 — May–Aug</option>' +
-        '<option value="3">Sprint 3 — Sep–Dec</option>' +
-      '</select>' +
-      '<div class="modal-error" id="modalError"></div>';
-
-    const yearSelect = document.getElementById("publishYear");
-    availableReportingYears().forEach(y => {
-      const opt = document.createElement("option");
-      opt.value = y;
-      opt.textContent = y;
-      yearSelect.appendChild(opt);
-    });
-    yearSelect.value = String(new Date().getFullYear());
-
-    modalConfirm.textContent = "Create snapshot files";
-    modalOverlay.style.display = "flex";
-
-    function publish(){
-      const year = Number(yearSelect.value);
-      const sprint = Number(document.getElementById("publishSprint").value);
-      const def = sprintDefinition(sprint);
-      const publishedAt = new Date();
-
-      if (!year || ![1,2,3].includes(sprint)){
-        document.getElementById("modalError").textContent = "Choose a valid reporting Year and Sprint.";
-        return;
-      }
-
-      closeModal();
-      createAndDownloadSprintSnapshot(year, sprint, def, publishedAt);
-    }
-
-    modalConfirm.onclick = publish;
-  }
-
-  function createAndDownloadSprintSnapshot(year, sprint, def, publishedAt){
+    const publishedAt = new Date();
     const dateStr = todayDateString();
-    const sprintKey = year + "-S" + sprint;
-    const sprintEnd = year + "-" + def.end;
 
-    // Keep the full learner array. This is the cumulative point-in-time state
-    // represented by the selected Sprint.
+    // chunk the full learner array so no single file exceeds GitHub's upload limit
     const fullSize = JSON.stringify(learners).length;
     const numParts = Math.max(1, Math.ceil(fullSize / CHUNK_TARGET_BYTES));
     const chunkLen = Math.ceil(learners.length / numParts);
     const files = [];
-
     for (let p = 0; p < numParts; p++){
       const slice = learners.slice(p*chunkLen, (p+1)*chunkLen);
       files.push({
         filename: "data-" + dateStr + "-part" + (p+1) + ".json",
-        obj: {
-          date: dateStr,
-          publishedAt: publishedAt.toISOString(),
-          reportingYear: year,
-          reportingSprint: sprint,
-          reportingSprintKey: sprintKey,
-          reportingSprintEnd: sprintEnd,
-          reportingRange: def.range,
-          part: p+1,
-          parts: numParts,
-          learners: slice
-        }
+        obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
       });
     }
-
+    // small aggregate file, used only for the historical trend chart
     files.push({
       filename: "agg-" + dateStr + ".json",
       obj: {
-        date: dateStr,
-        publishedAt: publishedAt.toISOString(),
-        reportingYear: year,
-        reportingSprint: sprint,
-        reportingSprintKey: sprintKey,
-        reportingSprintEnd: sprintEnd,
-        reportingRange: def.range,
+        date: dateStr, publishedAt: publishedAt.toISOString(),
         totals: computeTotals(learners),
         gender: Object.fromEntries(computeGenderCounts(learners)),
         byCountry: Object.fromEntries(computeCountryAgg(learners)),
@@ -926,66 +836,22 @@
       .then(res => res.ok ? res.json() : { dates: [] })
       .catch(() => ({ dates: [] }))
       .then(indexPayload => {
-        const oldEntries = Array.isArray(indexPayload.dates) ? indexPayload.dates : [];
-
-        // One active published snapshot per reporting Sprint. If you publish
-        // Sprint 2 again, the new snapshot replaces the previous Sprint 2 entry
-        // in the index. This prevents multiple technical upload dates from
-        // appearing as separate Sprint 2 reports.
-        const normalized = oldEntries
-          .map(d => {
-            if (typeof d === "string") {
-              const info = getSprintInfo(d);
-              return { date:d, parts:1, year:info.year, sprint:info.sprintNum,
-                sprintKey:info.key, sprintEnd:info.sprintEnd || "" };
-            }
-            return d;
-          })
-          .filter(e => e && e.date);
-
-        const filtered = normalized.filter(e => {
-          const key = e.sprintKey || ((e.year && e.sprint) ? e.year + "-S" + e.sprint : getSprintInfo(e.date).key);
-          return key !== sprintKey;
-        });
-
-        filtered.push({
-          date: dateStr,
-          parts: numParts,
-          year: year,
-          sprint: sprint,
-          sprintKey: sprintKey,
-          sprintEnd: sprintEnd,
-          range: def.range,
-          publishedAt: publishedAt.toISOString()
-        });
-
-        filtered.sort((a,b) => {
-          const ak = String(a.year || getSprintInfo(a.date).year) + "-S" + String(a.sprint || getSprintInfo(a.date).sprintNum);
-          const bk = String(b.year || getSprintInfo(b.date).year) + "-S" + String(b.sprint || getSprintInfo(b.date).sprintNum);
-          return ak.localeCompare(bk);
-        });
-
-        files.push({
-          filename: "snapshots-index.json",
-          obj: {
-            version: 2,
-            dates: filtered
-          }
-        });
+        const dateMap = new Map((Array.isArray(indexPayload.dates) ? indexPayload.dates : [])
+          .map(d => typeof d === "string" ? [d, 1] : [d.date, d.parts])); // tolerate old flat-string format
+        dateMap.set(dateStr, numParts);
+        const sortedDates = [...dateMap.keys()].sort().map(date => ({ date, parts: dateMap.get(date) }));
+        files.push({ filename: "snapshots-index.json", obj: { dates: sortedDates } });
 
         downloadSequence(files, (totalBytes) => {
           setLastUpdated(publishedAt, "published");
           showToast(
-            "Created " + year + " Sprint " + sprint + " snapshot (" + def.range + "). " +
-            files.length + " files (" + (totalBytes/1024/1024).toFixed(1) + " MB total). " +
-            "Upload ALL files into the same folder as index.html.",
+            "Downloaded " + files.length + " files (" + (totalBytes/1024/1024).toFixed(1) + " MB total, largest part safely under 25MB). " +
+            "Upload ALL of them into the same folder as index.html — snapshots-index.json replaces the old one, the rest are new files.",
             10000
           );
         });
       });
-  }
-
-  document.getElementById("publishBtn").addEventListener("click", openPublishPeriodModal);
+  });
 
   // ---- lightweight aggregate loader (for the historical trend chart only) ----
   function loadAgg(date){
@@ -999,27 +865,18 @@
   let selectedYear = "all";
   let selectedSprint = "all";
   function getSprintInfo(dateStr){
-    const meta = snapshotMetaMap && snapshotMetaMap.get(dateStr);
-    if (meta && meta.year && meta.sprint){
-      const year = Number(meta.year);
-      const sprintNum = Number(meta.sprint);
-      const range = meta.range || (sprintNum === 1 ? "Jan–Apr" : sprintNum === 2 ? "May–Aug" : "Sep–Dec");
-      const sprintEnd = meta.sprintEnd || "";
-      const shortLabel = "Sprint " + sprintNum + ": " + range;
-      const longLabel = year + " · " + shortLabel;
-      return { year, sprintNum, key: year + "-S" + sprintNum, range, sprintEnd, shortLabel, longLabel };
-    }
-
-    // Backward compatibility for old snapshots whose index only contains dates.
-    // New Sprint snapshots should always use explicit reporting metadata.
     const [year, month] = dateStr.split("-").map(Number);
-    let sprintNum, range, sprintEnd;
-    if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; sprintEnd = year + "-04-30"; }
-    else if (month <= 8){ sprintNum = 2; range = "May–Aug"; sprintEnd = year + "-08-31"; }
-    else { sprintNum = 3; range = "Sep–Dec"; sprintEnd = year + "-12-31"; }
+    let sprintNum, range;
+    if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
+    else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
+    else { sprintNum = 3; range = "Sep–Dec"; }
+    // key always includes the year so sprints from different years never merge.
+    // The label drops the year when a specific year is already chosen via the
+    // year filter (redundant otherwise); it's added back only under "All years",
+    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
     const shortLabel = "Sprint " + sprintNum + ": " + range;
     const longLabel = year + " · " + shortLabel;
-    return { year, sprintNum, key: year + "-S" + sprintNum, range, sprintEnd, shortLabel, longLabel };
+    return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
   }
   function buildYearOptions(){
     const sel = document.getElementById("yearFilter");
@@ -1142,12 +999,9 @@
     [...visibleDates].reverse().forEach(date => {
       const row = document.createElement("label");
       row.className = "date-dropdown-row" + (date === latestOverall ? " latest" : "");
-      const info = getSprintInfo(date);
-      const meta = snapshotMetaMap.get(date) || {};
-      const publishedLabel = meta.publishedAt ? " · published " + new Date(meta.publishedAt).toLocaleDateString() : "";
       row.innerHTML =
         '<input type="checkbox" data-date="' + date + '" ' + (selectedDates.has(date) ? "checked" : "") + ' />' +
-        '<span>' + escapeHtml(info.longLabel) + escapeHtml(publishedLabel) + '</span>' +
+        '<span>' + escapeHtml(date) + '</span>' +
         (date === latestOverall ? '<span class="date-dropdown-tag">Latest</span>' : '');
       panel.appendChild(row);
     });
@@ -1199,13 +1053,9 @@
   function updateDateDropdownLabel(){
     const label = document.getElementById("dateDropdownLabel");
     const sorted = [...selectedDates].sort();
-    if (sorted.length === 1){
-      const info = getSprintInfo(sorted[0]);
-      label.textContent = info.longLabel;
-    } else {
-      label.textContent = sorted.length === availableDates.length ? "All " + sorted.length + " snapshots"
-        : sorted.length + " snapshots selected";
-    }
+    label.textContent = sorted.length === 1 ? sorted[0]
+      : sorted.length === availableDates.length ? "All " + sorted.length + " dates"
+      : sorted.length + " dates selected";
   }
 
   // drives ONLY the historical trend chart/table — the main dashboard (stat
@@ -1261,7 +1111,6 @@
     const filtered = payloads.map(filteredTrendTotals);
     const totalsList = filtered.map(f => f.totals);
     const anyLimited = filtered.some(f => f.limited);
-    const reportingLabels = dates.map(d => getSprintInfo(d).longLabel);
 
     const noteEl = document.getElementById("trendFilterNote");
     if (filters.countries.size || filters.programs.size){
@@ -1281,7 +1130,7 @@
     trendChartRef = new Chart(document.getElementById("trendChart"), {
       type: "line",
       data: {
-        labels: reportingLabels,
+        labels: dates,
         datasets: [
           { label:"Enrolled", data: totalsList.map(t=>t.enrolled), borderColor: c.text, backgroundColor: c.text, tension:0.25 },
           { label:"Activated", data: totalsList.map(t=>t.activated), borderColor: c.activated, backgroundColor: c.activated, tension:0.25 },
@@ -1309,7 +1158,7 @@
       const convA = t.paid ? (t.activated/t.paid*100).toFixed(1) : "0.0";
       const tr = document.createElement("tr");
       tr.innerHTML =
-        "<td>"+escapeHtml(getSprintInfo(dates[i]).longLabel)+"</td>" +
+        "<td>"+escapeHtml(dates[i])+"</td>" +
         "<td>"+t.enrolled.toLocaleString()+"</td>" +
         "<td>"+t.activated.toLocaleString()+"</td>" +
         "<td>"+t.paid.toLocaleString()+"</td>" +
@@ -1321,7 +1170,7 @@
     });
   }
 
-  // Fetches and merges every part file for a given technical snapshot date, then feeds the result
+  // fetches and merges every part file for a given date, then feeds the result
   // through the exact same pipeline a live CSV upload uses — so Executive View
   // gets the full filterable dashboard, not just aggregate counts
   function loadFullSnapshotForDate(date){
@@ -1340,10 +1189,7 @@
       currentFullSnapshotDate = date;
       finalizeLearnersData();
       renderAll();
-      const meta = snapshotMetaMap.get(date) || {};
-      const publishedAt = chunks[0] && chunks[0].publishedAt
-        ? new Date(chunks[0].publishedAt)
-        : (meta.publishedAt ? new Date(meta.publishedAt) : new Date());
+      const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
       setLastUpdated(publishedAt, "published");
       document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
     }).catch(() => {
@@ -1359,42 +1205,16 @@
       .then(res => { if (!res.ok) throw new Error("no index"); return res.json(); })
       .then(indexPayload => {
         if (!indexPayload || !Array.isArray(indexPayload.dates) || !indexPayload.dates.length) throw new Error("empty index");
-
-        snapshotEntries = indexPayload.dates.map(d => {
-          if (typeof d === "string"){
-            const info = getSprintInfo(d);
-            return { date:d, parts:1, year:info.year, sprint:info.sprintNum,
-              sprintKey:info.key, sprintEnd:info.sprintEnd || "", range:info.range || "" };
-          }
-          return d;
-        }).filter(e => e && e.date);
-
-        // Keep technical file dates sorted chronologically, but Year/Sprint
-        // filtering uses the explicit reporting metadata when available.
-        snapshotEntries.sort((a,b) => a.date < b.date ? -1 : 1);
-        availableDates = snapshotEntries.map(e => e.date);
-        datePartsMap = new Map(snapshotEntries.map(e => [e.date, Number(e.parts) || 1]));
-        snapshotMetaMap = new Map(snapshotEntries.map(e => [e.date, e]));
-
-        selectedDates = new Set([latestSnapshotDate()]);
+        const entries = indexPayload.dates.map(d => typeof d === "string" ? { date: d, parts: 1 } : d); // tolerate old flat-string format
+        entries.sort((a,b) => a.date < b.date ? -1 : 1);
+        availableDates = entries.map(e => e.date);
+        datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
+        selectedDates = new Set([availableDates[availableDates.length-1]]);
         buildDateChips();
-        loadFullSnapshotForDate(latestSnapshotDate());
+        loadFullSnapshotForDate(availableDates[availableDates.length-1]);
         loadAndRenderSelectedDates();
       })
       .catch(() => tryLoadLegacySnapshot());
-  }
-
-  function latestSnapshotDate(){
-    if (!snapshotEntries.length) return availableDates[availableDates.length-1];
-    return snapshotEntries
-      .slice()
-      .sort((a,b) => {
-        const ak = String(a.year || getSprintInfo(a.date).year) + "-S" + String(a.sprint || getSprintInfo(a.date).sprintNum);
-        const bk = String(b.year || getSprintInfo(b.date).year) + "-S" + String(b.sprint || getSprintInfo(b.date).sprintNum);
-        if (ak !== bk) return ak.localeCompare(bk);
-        return a.date.localeCompare(b.date);
-      })
-      .at(-1).date;
   }
 
   // backward compatibility with the older aggregate-only single-file format
@@ -1815,41 +1635,28 @@
       el.style.display = "none";
       return;
     }
+    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
+    if (!sprintDates.length){ el.style.display = "none"; return; }
+    const idx = availableDates.indexOf(sprintDates[0]);
+    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
 
-    const currentInfo = getSprintInfo(currentFullSnapshotDate);
-    const currentKey = currentInfo.key;
-    const currentYear = Number(currentInfo.year);
-    const currentSprint = Number(currentInfo.sprintNum);
-
-    // The baseline is the immediately preceding reporting Sprint:
-    // S2 compares against S1 of the same year; S3 against S2; S1 compares
-    // against S3 of the previous year if that snapshot exists.
-    let baselineKey;
-    if (currentSprint === 1) baselineKey = (currentYear - 1) + "-S3";
-    else baselineKey = currentYear + "-S" + (currentSprint - 1);
-
-    const baselineEntry = snapshotEntries.find(e => {
-      const info = getSprintInfo(e.date);
-      return info.key === baselineKey;
-    });
-
-    if (!baselineEntry){
-      el.textContent = "No prior Sprint snapshot is available for comparison. These are cumulative totals at the end of " + currentInfo.longLabel + ".";
+    if (!baselineDate){
+      el.textContent = "Earliest published sprint on record — no prior snapshot to compare against, so these are cumulative totals, not sprint-only growth.";
       el.style.display = "block";
       return;
     }
 
-    loadAgg(baselineEntry.date).then(payload => {
+    loadAgg(baselineDate).then(payload => {
       const b = payload.totals, c = lastTotals;
+      const sprintLabel = getSprintInfo(sprintDates[sprintDates.length-1]).longLabel;
       el.innerHTML =
-        "<strong>Growth in " + escapeHtml(currentInfo.longLabel) + "</strong> (vs. " +
-        escapeHtml(getSprintInfo(baselineEntry.date).longLabel) + "): " +
-        (c.enrolled - b.enrolled >= 0 ? "+" : "") + (c.enrolled - b.enrolled).toLocaleString() + " enrolled, " +
-        (c.activated - b.activated >= 0 ? "+" : "") + (c.activated - b.activated).toLocaleString() + " activated, " +
-        (c.paid - b.paid >= 0 ? "+" : "") + (c.paid - b.paid).toLocaleString() + " paid.";
+        "<strong>New in " + escapeHtml(sprintLabel) + "</strong> (vs. last snapshot before it, " + escapeHtml(baselineDate) + "): " +
+        "+" + (c.enrolled - b.enrolled).toLocaleString() + " enrolled, " +
+        "+" + (c.activated - b.activated).toLocaleString() + " activated, " +
+        "+" + (c.paid - b.paid).toLocaleString() + " paid.";
       el.style.display = "block";
     }).catch(() => {
-      el.textContent = "Couldn't load the previous Sprint snapshot needed to calculate growth.";
+      el.textContent = "Couldn't load the baseline snapshot needed to compute sprint growth.";
       el.style.display = "block";
     });
   }
