@@ -212,6 +212,10 @@
     padding:0; line-height:1;
   }
   .stat-export-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
+  #sprintGrowthNote{
+    margin-top:14px; padding:10px 14px; border-radius:8px; background: var(--activated-soft);
+    color: var(--ink); font-size:12.5px; border:1px solid var(--border);
+  }
 
   /* ---------- Charts row ---------- */
   .charts-row{ display:grid; grid-template-columns: 1fr 1.6fr; gap:18px; }
@@ -383,7 +387,7 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Pick 2 or more dates to compare day-over-day change. The main dashboard above always shows the latest date — this section is just for historical comparison.</span>
+        <span class="sub">Pick a year/sprint to scope the whole dashboard to that window. Pick 2+ individual dates below to compare day-over-day change.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <select id="yearFilter" style="max-width:120px">
@@ -474,6 +478,7 @@
           <div class="footnote">enrolled in 2+ programs</div>
         </div>
       </div>
+      <div id="sprintGrowthNote" style="display:none"></div>
     </section>
 
     <section class="card">
@@ -615,6 +620,12 @@
   const ADMIN_PASSWORD = "alx-admin-2026";
   let lastUpdated = null;       // Date object
   let lastUpdatedSource = null; // "published" | "local"
+
+  // which published date the *main* dashboard (stat cards / bar chart / scoreboard /
+  // gender chart / directory) is currently built from. Kept separate from
+  // `selectedDates` (which can hold many dates for the trend-comparison chart only)
+  // so we always know whether the main dashboard needs to be reloaded.
+  let currentFullSnapshotDate = null;
 
   // ---------------- DOM refs ----------------
   const dropzone = document.getElementById("dropzone");
@@ -900,14 +911,39 @@
     if (keys.includes(prevValue)) sel.value = prevValue;
     else sel.value = "all";
   }
+
+  // Centralizes what happens whenever the year/sprint scope, or the set of
+  // selected dates, changes: (1) recompute which dates are visible in the date
+  // dropdown, (2) redraw the historical trend chart/table for whatever's
+  // selected, and (3) reload the *entire* main dashboard (stat cards, bar
+  // chart, scoreboard, gender chart, directory) from the most recent date
+  // inside the current selection. Every filter control below calls this one
+  // function so nothing can drift out of sync again.
+  function applySnapshotSelection(){
+    buildDateChips();
+    loadAndRenderSelectedDates();
+    syncMainDashboardToSelection();
+  }
+
+  // Ensures the main dashboard (everything except the trend-comparison
+  // section) reflects the most recent date within the current selection —
+  // this is what actually makes the Year/Sprint filters "do something" beyond
+  // the trend chart.
+  function syncMainDashboardToSelection(){
+    const dates = [...selectedDates].sort();
+    if (!dates.length) return;
+    const target = dates[dates.length - 1]; // most recent of whatever's selected
+    if (target === currentFullSnapshotDate) return; // already showing this date
+    loadFullSnapshotForDate(target);
+  }
+
   document.getElementById("yearFilter").addEventListener("change", (e) => {
     selectedYear = e.target.value;
     selectedSprint = "all"; // sprint list depends on year, so reset it whenever the year changes
     const inScope = availableDates.filter(d => selectedYear === "all" || String(getSprintInfo(d).year) === String(selectedYear));
     selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
     if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
-    buildDateChips();
-    loadAndRenderSelectedDates();
+    applySnapshotSelection();
   });
   document.getElementById("sprintFilter").addEventListener("change", (e) => {
     selectedSprint = e.target.value;
@@ -919,8 +955,7 @@
     });
     selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
     if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
-    buildDateChips();
-    loadAndRenderSelectedDates();
+    applySnapshotSelection();
   });
 
   // outside-click-to-close is wired once here, not inside buildDateChips (which can
@@ -987,6 +1022,7 @@
         updateSelectAllState();
         updateDateDropdownLabel();
         loadAndRenderSelectedDates();
+        syncMainDashboardToSelection();
       });
     });
 
@@ -1001,6 +1037,7 @@
       updateSelectAllState();
       updateDateDropdownLabel();
       loadAndRenderSelectedDates();
+      syncMainDashboardToSelection();
     });
 
     trigger.onclick = (e) => {
@@ -1022,8 +1059,8 @@
   }
 
   // drives ONLY the historical trend chart/table — the main dashboard (stat
-  // cards, charts, filters, directory) always reflects the latest full dataset,
-  // loaded separately by loadFullSnapshotForLatestDate()
+  // cards, charts, filters, directory) is kept in sync separately by
+  // syncMainDashboardToSelection() / loadFullSnapshotForDate()
   function loadAndRenderSelectedDates(){
     const dates = [...selectedDates].sort();
     Promise.all(dates.map(loadAgg)).then(payloads => {
@@ -1149,11 +1186,14 @@
       let merged = [];
       chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
       learners = merged;
+      currentFullSnapshotDate = date;
       finalizeLearnersData();
       renderAll();
       const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
       setLastUpdated(publishedAt, "published");
       document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
+    }).catch(() => {
+      showToast("Couldn't load the full snapshot for " + date + ".");
     });
   }
 
@@ -1236,6 +1276,9 @@
           page = 1;
 
           aggregate(parsed.data);
+          // a locally-loaded CSV isn't a published snapshot date, so it no
+          // longer corresponds to any entry the year/sprint pickers know about
+          currentFullSnapshotDate = null;
           spinner.classList.remove("show");
           fileStatus.classList.add("ok");
           fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + learners.length.toLocaleString() + " unique learners";
@@ -1534,6 +1577,7 @@
     renderBarChart(computeCountryAgg(filtered));
     renderScoreboard(computeCountryAgg(filtered), true);
     renderTable();
+    renderSprintGrowth();
   }
 
   // Public/summary mode: only aggregate counts are available (no per-learner
@@ -1578,6 +1622,43 @@
     document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
     document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
+  }
+
+  // Shows how much was GAINED during the currently-selected sprint, by diffing
+  // the totals at the end of the sprint (the current main-dashboard totals)
+  // against the totals from the last published date BEFORE the sprint began.
+  // Only meaningful when a specific sprint is chosen (not "All sprints") and
+  // the main dashboard is showing published-snapshot data.
+  function renderSprintGrowth(){
+    const el = document.getElementById("sprintGrowthNote");
+    if (selectedSprint === "all" || !currentFullSnapshotDate || !lastTotals){
+      el.style.display = "none";
+      return;
+    }
+    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
+    if (!sprintDates.length){ el.style.display = "none"; return; }
+    const idx = availableDates.indexOf(sprintDates[0]);
+    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+
+    if (!baselineDate){
+      el.textContent = "Earliest published sprint on record — no prior snapshot to compare against, so these are cumulative totals, not sprint-only growth.";
+      el.style.display = "block";
+      return;
+    }
+
+    loadAgg(baselineDate).then(payload => {
+      const b = payload.totals, c = lastTotals;
+      const sprintLabel = getSprintInfo(sprintDates[sprintDates.length-1]).longLabel;
+      el.innerHTML =
+        "<strong>New in " + escapeHtml(sprintLabel) + "</strong> (vs. last snapshot before it, " + escapeHtml(baselineDate) + "): " +
+        "+" + (c.enrolled - b.enrolled).toLocaleString() + " enrolled, " +
+        "+" + (c.activated - b.activated).toLocaleString() + " activated, " +
+        "+" + (c.paid - b.paid).toLocaleString() + " paid.";
+      el.style.display = "block";
+    }).catch(() => {
+      el.textContent = "Couldn't load the baseline snapshot needed to compute sprint growth.";
+      el.style.display = "block";
+    });
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
