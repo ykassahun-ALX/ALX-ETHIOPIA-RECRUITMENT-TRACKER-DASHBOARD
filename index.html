@@ -386,8 +386,8 @@
 
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
-        <h2>Daily snapshots</h2>
-        <span class="sub">Pick a year/sprint to scope the whole dashboard to that window. Pick 2+ individual dates below to compare day-over-day change.</span>
+        <h2>Year &amp; Sprint reporting</h2>
+        <span class="sub">Year and Sprint are calculated from learner dates in the uploaded data. Sprint 1 = Jan–Apr, Sprint 2 = May–Aug, Sprint 3 = Sep–Dec. Published dates below are optional trend snapshots.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <select id="yearFilter" style="max-width:120px">
@@ -627,6 +627,12 @@
   // so we always know whether the main dashboard needs to be reloaded.
   let currentFullSnapshotDate = null;
 
+  // Historical reporting is driven by dates contained in the source CSV, NOT
+  // by the day the CSV is uploaded/published. These are populated automatically
+  // from whichever matching date columns exist in the Student Activity export.
+  let detectedDateFields = { enrollment: [], activation: [], payment: [], graduation: [] };
+  let dateFieldWarnings = [];
+
   // ---------------- DOM refs ----------------
   const dropzone = document.getElementById("dropzone");
   const fileInput = document.getElementById("fileInput");
@@ -861,55 +867,240 @@
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
   }
 
+  // ---------------- Historical date helpers ----------------
+  // The export has changed column names over time, so the dashboard checks a
+  // prioritized list of likely date fields instead of relying on one hard-coded
+  // header. Exact matches are preferred; fuzzy matches are used only as a fallback.
+  const DATE_FIELD_CANDIDATES = {
+    enrollment: [
+      "Enrollment date", "Enrollment Date", "Enrolled date", "Enrolled Date",
+      "Registration date", "Registration Date", "Application date", "Application Date",
+      "Created at", "Created At", "Created date", "Created Date", "Date enrolled",
+      "Date of enrollment", "Date of Enrolment", "Joined date", "Signup date", "Sign up date"
+    ],
+    activation: [
+      "Activation date", "Activation Date", "Activated date", "Activated Date",
+      "Date activated", "Date of activation", "Enrollment activation date",
+      "Program activation date"
+    ],
+    payment: [
+      "Payment date", "Payment Date", "Paid date", "Paid Date", "Date paid",
+      "Date of payment", "First payment date", "Payment completed date"
+    ],
+    graduation: [
+      "Graduation date", "Graduation Date", "Graduated date", "Graduated Date",
+      "Date graduated", "Date of graduation", "Program graduation date"
+    ]
+  };
+
+  function normalizeHeader(s){
+    return String(s || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  }
+
+  function findDateFields(rows){
+    const headers = rows.length ? Object.keys(rows[0] || {}) : [];
+    const normalized = new Map(headers.map(h => [normalizeHeader(h), h]));
+    const result = { enrollment: [], activation: [], payment: [], graduation: [] };
+
+    for (const kind of Object.keys(result)){
+      const candidates = DATE_FIELD_CANDIDATES[kind];
+      for (const candidate of candidates){
+        const exact = normalized.get(normalizeHeader(candidate));
+        if (exact && !result[kind].includes(exact)) result[kind].push(exact);
+      }
+    }
+
+    // Fuzzy fallbacks: only add a header when its meaning is reasonably clear.
+    const fuzzyRules = {
+      enrollment: [/enroll.*date/i, /registration.*date/i, /created.*at/i, /signup.*date/i],
+      activation: [/activat.*date/i],
+      payment: [/payment.*date/i, /paid.*date/i],
+      graduation: [/graduat.*date/i]
+    };
+    for (const kind of Object.keys(result)){
+      if (result[kind].length) continue;
+      for (const h of headers){
+        if (fuzzyRules[kind].some(re => re.test(h)) && !result[kind].includes(h)) result[kind].push(h);
+      }
+    }
+    return result;
+  }
+
+  function parseSourceDate(value){
+    if (value === undefined || value === null) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    // YYYY-MM-DD and ISO timestamps are handled consistently without timezone
+    // shifting the calendar day.
+    const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso){
+      const d = new Date(Number(iso[1]), Number(iso[2])-1, Number(iso[3]));
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    // Common slash/dash date formats. For ambiguous numeric dates, prefer the
+    // format normally used by Ethiopian/ALX exports (day-month-year) when the
+    // first number is >12; otherwise let the browser parse the original value.
+    const m = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/);
+    if (m){
+      const a = Number(m[1]), b = Number(m[2]), y = Number(m[3]);
+      let day = a, month = b;
+      if (a <= 12 && b > 12){ month = a; day = b; }
+      const d = new Date(y, month-1, day);
+      if (d.getFullYear() === y && d.getMonth() === month-1 && d.getDate() === day) return d;
+    }
+
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  function firstDateFromRow(row, fields){
+    const dates = [];
+    for (const field of fields || []){
+      const d = parseSourceDate(row[field]);
+      if (d) dates.push(d);
+    }
+    if (!dates.length) return null;
+    return new Date(Math.min(...dates.map(d => d.getTime())));
+  }
+
+  function minDate(a,b){
+    if (!a) return b || null;
+    if (!b) return a;
+    return a <= b ? a : b;
+  }
+
+  function dateKey(d){
+    if (!(d instanceof Date) || isNaN(d.getTime())) return null;
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  }
+
+  function sprintFromMonth(month){
+    return month <= 4 ? 1 : month <= 8 ? 2 : 3;
+  }
+
+  function sprintCutoff(year, sprintNum){
+    const month = sprintNum === 1 ? 3 : sprintNum === 2 ? 7 : 11;
+    const day = sprintNum === 1 ? 30 : sprintNum === 2 ? 31 : 31;
+    return new Date(year, month, day, 23, 59, 59, 999);
+  }
+
+  function latestDataDate(){
+    let latest = null;
+    learners.forEach(L => {
+      [L.enrollmentDate, L.activationDate, L.paymentDate, L.graduationDate].forEach(d => {
+        if (d && (!latest || d > latest)) latest = d;
+      });
+    });
+    return latest;
+  }
+
+  function getSelectedCutoff(){
+    if (selectedSprint !== "all") {
+      const parts = String(selectedSprint).split("-S");
+      if (parts.length === 2) return sprintCutoff(Number(parts[0]), Number(parts[1]));
+    }
+    if (selectedYear !== "all") {
+      const year = Number(selectedYear);
+      const dates = [];
+      learners.forEach(L => {
+        [L.enrollmentDate, L.activationDate, L.paymentDate, L.graduationDate].forEach(d => {
+          if (d && d.getFullYear() === year) dates.push(d);
+        });
+      });
+      if (dates.length) return new Date(Math.max(...dates.map(d => d.getTime())));
+      return new Date(year, 11, 31, 23, 59, 59, 999);
+    }
+    return null;
+  }
+
+  function learnerExistsAt(L, cutoff){
+    return !cutoff || !L.enrollmentDate || L.enrollmentDate <= cutoff;
+  }
+
+  function learnerAtCutoff(L, cutoff){
+    if (!cutoff) return L;
+    return {
+      ...L,
+      activated: !!L.activationDate && L.activationDate <= cutoff,
+      paid: !!L.paymentDate && L.paymentDate <= cutoff,
+      graduated: !!L.graduationDate && L.graduationDate <= cutoff
+    };
+  }
+
+  function getReportingLearners(){
+    const cutoff = getSelectedCutoff();
+    if (!cutoff) return learners;
+    return learners.filter(L => learnerExistsAt(L, cutoff)).map(L => learnerAtCutoff(L, cutoff));
+  }
+
   // ---------------- Sprints (ALX calendar: Jan-Apr, May-Aug, Sep-Dec) ----------------
   let selectedYear = "all";
   let selectedSprint = "all";
+
   function getSprintInfo(dateStr){
     const [year, month] = dateStr.split("-").map(Number);
-    let sprintNum, range;
-    if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
-    else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
-    else { sprintNum = 3; range = "Sep–Dec"; }
-    // key always includes the year so sprints from different years never merge.
-    // The label drops the year when a specific year is already chosen via the
-    // year filter (redundant otherwise); it's added back only under "All years",
-    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
+    const sprintNum = sprintFromMonth(month);
+    const range = sprintNum === 1 ? "Jan–Apr" : sprintNum === 2 ? "May–Aug" : "Sep–Dec";
     const shortLabel = "Sprint " + sprintNum + ": " + range;
     const longLabel = year + " · " + shortLabel;
     return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
   }
+
+  function getDataDates(){
+    const set = new Set();
+    learners.forEach(L => {
+      [L.enrollmentDate, L.activationDate, L.paymentDate, L.graduationDate].forEach(d => {
+        const k = dateKey(d); if (k) set.add(k);
+      });
+    });
+    return [...set].sort();
+  }
+
+  function getDataSprintKeys(){
+    const seen = new Map();
+    getDataDates().forEach(d => {
+      const s = getSprintInfo(d);
+      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
+      seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
+    });
+    return seen;
+  }
+
   function buildYearOptions(){
     const sel = document.getElementById("yearFilter");
     const years = new Set();
+    getDataDates().forEach(d => years.add(getSprintInfo(d).year));
+    // Keep published snapshot years too, so historical files remain navigable.
     availableDates.forEach(d => years.add(getSprintInfo(d).year));
     const sortedYears = [...years].sort();
     const prevValue = sel.value;
     sel.innerHTML = '<option value="all">All years</option>';
     sortedYears.forEach(y => {
-      const opt = document.createElement("option");
-      opt.value = y; opt.textContent = y;
-      sel.appendChild(opt);
+      const opt = document.createElement("option"); opt.value = y; opt.textContent = y; sel.appendChild(opt);
     });
     if (sortedYears.map(String).includes(prevValue)) sel.value = prevValue;
   }
+
   function buildSprintOptions(){
     const sel = document.getElementById("sprintFilter");
-    const seen = new Map();
-    availableDates.forEach(d => {
-      const s = getSprintInfo(d);
-      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
-      seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
-    });
+    const seen = getDataSprintKeys();
+    // If the current dataset has no event dates yet, retain snapshot-derived options.
+    if (!seen.size){
+      availableDates.forEach(d => {
+        const s = getSprintInfo(d);
+        if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
+        seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
+      });
+    }
     const keys = [...seen.keys()].sort();
     const prevValue = sel.value;
     sel.innerHTML = '<option value="all">All sprints</option>';
     keys.forEach(key => {
-      const opt = document.createElement("option");
-      opt.value = key; opt.textContent = seen.get(key);
-      sel.appendChild(opt);
+      const opt = document.createElement("option"); opt.value = key; opt.textContent = seen.get(key); sel.appendChild(opt);
     });
-    if (keys.includes(prevValue)) sel.value = prevValue;
-    else sel.value = "all";
+    if (keys.includes(prevValue)) sel.value = prevValue; else sel.value = "all";
   }
 
   // Centralizes what happens whenever the year/sprint scope, or the set of
@@ -922,7 +1113,11 @@
   function applySnapshotSelection(){
     buildDateChips();
     loadAndRenderSelectedDates();
-    syncMainDashboardToSelection();
+    if (viewMode === "full" && learners.length){
+      page = 1; renderAll();
+    } else {
+      syncMainDashboardToSelection();
+    }
   }
 
   // Ensures the main dashboard (everything except the trend-comparison
@@ -968,21 +1163,30 @@
   function buildDateChips(){
     buildYearOptions();
     buildSprintOptions();
-    const trigger = document.getElementById("dateDropdownTrigger");
+
     const panel = document.getElementById("dateDropdownPanel");
+    const trigger = document.getElementById("dateDropdownTrigger");
+    const dropdown = document.getElementById("dateDropdown");
+
+    // Sprint/Year controls are always useful. The date comparison picker only
+    // appears when published daily snapshots exist.
+    if (!availableDates.length){
+      dropdown.style.display = "none";
+      return;
+    }
+    dropdown.style.display = "inline-block";
+
     const visibleDates = availableDates.filter(d => {
       const s = getSprintInfo(d);
       if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
       if (selectedSprint !== "all" && s.key !== selectedSprint) return false;
       return true;
     });
-    const latestOverall = availableDates[availableDates.length - 1];
-
+    const latestOverall = availableDates[availableDates.length-1];
     panel.innerHTML = "";
 
     if (!visibleDates.length){
       panel.innerHTML = '<div style="padding:10px 8px; font-size:12.5px; color:var(--muted);">No published dates in this selection yet.</div>';
-      document.getElementById("snapshotsSection").style.display = "block";
       return;
     }
 
@@ -991,17 +1195,13 @@
     const scopeLabel = (selectedYear !== "all" || selectedSprint !== "all") ? " in selection" : "";
     allRow.innerHTML = '<input type="checkbox" id="dateSelectAll" /><span>Select all'+scopeLabel+'</span>';
     panel.appendChild(allRow);
-    const divider = document.createElement("div");
-    divider.className = "date-dropdown-divider";
-    panel.appendChild(divider);
+    const divider = document.createElement("div"); divider.className = "date-dropdown-divider"; panel.appendChild(divider);
 
-    // most recent first — that's what people will want to find as the list grows
     [...visibleDates].reverse().forEach(date => {
       const row = document.createElement("label");
       row.className = "date-dropdown-row" + (date === latestOverall ? " latest" : "");
-      row.innerHTML =
-        '<input type="checkbox" data-date="' + date + '" ' + (selectedDates.has(date) ? "checked" : "") + ' />' +
-        '<span>' + escapeHtml(date) + '</span>' +
+      row.innerHTML = '<input type="checkbox" data-date="'+date+'" '+(selectedDates.has(date)?"checked":"")+' />' +
+        '<span>'+escapeHtml(date)+'</span>' +
         (date === latestOverall ? '<span class="date-dropdown-tag">Latest</span>' : '');
       panel.appendChild(row);
     });
@@ -1014,39 +1214,29 @@
     }
 
     panel.querySelectorAll("input[data-date]").forEach(cb => {
-      cb.addEventListener("change", (e) => {
+      cb.addEventListener("change", e => {
         const date = e.target.dataset.date;
         if (e.target.checked) selectedDates.add(date);
-        else if (selectedDates.size > 1) selectedDates.delete(date); // always keep >=1 selected
-        else e.target.checked = true; // block unchecking the last remaining date
-        updateSelectAllState();
-        updateDateDropdownLabel();
-        loadAndRenderSelectedDates();
-        syncMainDashboardToSelection();
+        else if (selectedDates.size > 1) selectedDates.delete(date);
+        else e.target.checked = true;
+        updateSelectAllState(); updateDateDropdownLabel();
+        loadAndRenderSelectedDates(); syncMainDashboardToSelection();
       });
     });
 
-    document.getElementById("dateSelectAll").addEventListener("change", (e) => {
-      if (e.target.checked){
-        visibleDates.forEach(d => selectedDates.add(d));
-      } else {
+    document.getElementById("dateSelectAll").addEventListener("change", e => {
+      if (e.target.checked) visibleDates.forEach(d => selectedDates.add(d));
+      else {
         visibleDates.forEach(d => { if (selectedDates.size > 1) selectedDates.delete(d); });
         if (!selectedDates.size) selectedDates.add(latestOverall);
       }
-      panel.querySelectorAll("input[data-date]").forEach(cb => { cb.checked = selectedDates.has(cb.dataset.date); });
-      updateSelectAllState();
-      updateDateDropdownLabel();
-      loadAndRenderSelectedDates();
-      syncMainDashboardToSelection();
+      panel.querySelectorAll("input[data-date]").forEach(cb => cb.checked = selectedDates.has(cb.dataset.date));
+      updateSelectAllState(); updateDateDropdownLabel();
+      loadAndRenderSelectedDates(); syncMainDashboardToSelection();
     });
 
-    trigger.onclick = (e) => {
-      e.stopPropagation();
-      panel.style.display = panel.style.display === "block" ? "none" : "block";
-    };
-
-    updateSelectAllState();
-    updateDateDropdownLabel();
+    trigger.onclick = e => { e.stopPropagation(); panel.style.display = panel.style.display === "block" ? "none" : "block"; };
+    updateSelectAllState(); updateDateDropdownLabel();
     document.getElementById("snapshotsSection").style.display = "block";
   }
 
@@ -1185,7 +1375,13 @@
     return Promise.all(fetches).then(chunks => {
       let merged = [];
       chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
-      learners = merged;
+      learners = merged.map(L => ({
+        ...L,
+        enrollmentDate: parseSourceDate(L.enrollmentDate),
+        activationDate: parseSourceDate(L.activationDate),
+        paymentDate: parseSourceDate(L.paymentDate),
+        graduationDate: parseSourceDate(L.graduationDate)
+      }));
       currentFullSnapshotDate = date;
       finalizeLearnersData();
       renderAll();
@@ -1276,14 +1472,17 @@
           page = 1;
 
           aggregate(parsed.data);
-          // a locally-loaded CSV isn't a published snapshot date, so it no
-          // longer corresponds to any entry the year/sprint pickers know about
+          // A local CSV is still fully eligible for Year/Sprint reporting.
+          // The upload/publish date is deliberately NOT used to assign a sprint.
           currentFullSnapshotDate = null;
+          selectedYear = "all";
+          selectedSprint = "all";
           spinner.classList.remove("show");
           fileStatus.classList.add("ok");
           fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + learners.length.toLocaleString() + " unique learners";
           setLastUpdated(new Date(), "local");
-          document.getElementById("snapshotsSection").style.display = "none";
+          document.getElementById("snapshotsSection").style.display = "block";
+          buildDateChips();
           renderAll(true);
         }));
       };
@@ -1307,68 +1506,87 @@
   }
 
   function aggregate(rows){
-    const map = new Map();
+    detectedDateFields = findDateFields(rows);
+    dateFieldWarnings = [];
+    ["enrollment","activation","payment","graduation"].forEach(kind => {
+      if (!detectedDateFields[kind].length) dateFieldWarnings.push(kind);
+    });
 
+    const map = new Map();
     for (const row of rows){
       const email = (row["Email"] || "").trim().toLowerCase();
       if (!email) continue;
 
+      const rowEnrollmentDate = firstDateFromRow(row, detectedDateFields.enrollment);
+      const rowActivationDate = firstDateFromRow(row, detectedDateFields.activation);
+      const rowPaymentDate = firstDateFromRow(row, detectedDateFields.payment);
+      const rowGraduationDate = firstDateFromRow(row, detectedDateFields.graduation);
+
       let L = map.get(email);
       if (!L){
         L = {
-          email: email,
+          email,
           first: row["First name"] || "",
           last: row["Last name"] || "",
           gender: row["Gender"] || "n/a",
           country: normalizeCountry(row["Country of residence"]),
           region: row["Regions"] || "n/a",
-          activated: false,
-          paid: false,
-          graduated: false,
-          programs: new Map() // programName -> {seq, name, status, health}
+          activated: false, paid: false, graduated: false,
+          enrollmentDate: rowEnrollmentDate,
+          activationDate: rowActivationDate,
+          paymentDate: rowPaymentDate,
+          graduationDate: rowGraduationDate,
+          programs: new Map()
         };
         map.set(email, L);
+      } else {
+        L.enrollmentDate = minDate(L.enrollmentDate, rowEnrollmentDate);
+        L.activationDate = minDate(L.activationDate, rowActivationDate);
+        L.paymentDate = minDate(L.paymentDate, rowPaymentDate);
+        L.graduationDate = minDate(L.graduationDate, rowGraduationDate);
       }
-      // two different export formats have shown up in practice: a detailed
-      // course-level export, and a simpler program-level one — check both
-      // column names so either works without the admin needing to know which.
-      if (row["Is enrollment activated"] === "Yes" || row["Is program activated"] === "Yes") L.activated = true;
-      if (row["Payment plan status"] === "ACTIVE") L.paid = true;
-      if (row["Learner health classification status"] === "Graduated" || row["Is program graduated"] === "Yes") L.graduated = true;
 
+      const rowActivated = row["Is enrollment activated"] === "Yes" || row["Is program activated"] === "Yes";
+      const rowPaid = row["Payment plan status"] === "ACTIVE";
+      const rowGraduated = row["Learner health classification status"] === "Graduated" || row["Is program graduated"] === "Yes";
+      L.activated = L.activated || rowActivated;
+      L.paid = L.paid || rowPaid;
+      L.graduated = L.graduated || rowGraduated;
+
+      // If an activation/payment/graduation date is present, it is authoritative
+      // for historical reporting. If no date field exists at all, we keep the
+      // current boolean so the current/all-sprints view still works.
       const program = row["Program name"] || "n/a";
       const courseName = row["Course name"] || "n/a";
       const seqRaw = row["Course sequence number"];
-      const seq = (seqRaw === "" || seqRaw === undefined || seqRaw === null) ? -1 : parseInt(seqRaw, 10);
+      const seq = (seqRaw === "" || seqRaw === undefined || seqRaw === null) ? -1 : parseInt(seqRaw,10);
       const status = row["Course status (LMS)"] || "n/a";
       const health = row["Learner health classification status"] || "n/a";
-
       if (courseName !== "n/a" && !isNaN(seq)){
         const existing = L.programs.get(program);
-        if (!existing || seq > existing.seq){
-          L.programs.set(program, { seq: seq, name: courseName, status: status, health: health });
-        }
+        if (!existing || seq > existing.seq) L.programs.set(program,{seq,name:courseName,status,health});
       } else if (!L.programs.has(program)){
-        L.programs.set(program, { seq: -1, name: "n/a", status: "n/a", health: health });
+        L.programs.set(program,{seq:-1,name:"n/a",status:"n/a",health});
       }
     }
 
-    // finalize into plain arrays for fast repeated filtering
     learners = [];
     for (const L of map.values()){
       const progArr = [];
-      for (const [name, info] of L.programs.entries()){
-        progArr.push({ program: name, course: info.name, status: info.status, health: info.health });
-      }
+      for (const [name, info] of L.programs.entries()) progArr.push({program:name,course:info.name,status:info.status,health:info.health});
       learners.push({
-        email: L.email, first: L.first, last: L.last, gender: L.gender,
-        country: L.country, region: L.region,
-        activated: L.activated, paid: L.paid, graduated: L.graduated,
-        programs: progArr, multi: progArr.length > 1
+        email:L.email, first:L.first, last:L.last, gender:L.gender, country:L.country, region:L.region,
+        activated:L.activated, paid:L.paid, graduated:L.graduated,
+        enrollmentDate:L.enrollmentDate, activationDate:L.activationDate, paymentDate:L.paymentDate, graduationDate:L.graduationDate,
+        programs:progArr, multi:progArr.length>1
       });
     }
-
     finalizeLearnersData();
+
+    if (dateFieldWarnings.length){
+      const names = dateFieldWarnings.map(k => k.charAt(0).toUpperCase()+k.slice(1));
+      showToast("Historical date warning: no source date column was detected for "+names.join(", ")+". Those metrics cannot be reconstructed by sprint from this CSV.", 9000);
+    }
   }
 
   // (re)computes program/country/course option lists from whatever is currently in
@@ -1541,8 +1759,9 @@
 
   // ---------------- Filtering ----------------
   function getFiltered(){
-    if (!filtersEnabled) return learners; // toggle is off — selections stay visible but don't filter
-    return learners.filter(L => {
+    const reportingRows = getReportingLearners();
+    if (!filtersEnabled) return reportingRows; // toggle is off — selections stay visible but don't filter
+    return reportingRows.filter(L => {
       if (filters.programs.size && !L.programs.some(p => filters.programs.has(p.program))) return false;
       if (filters.countries.size && !filters.countries.has(L.country)) return false;
       if (filters.course !== "all"){
@@ -1624,41 +1843,38 @@
     document.getElementById("statMulti").textContent = multi.toLocaleString();
   }
 
-  // Shows how much was GAINED during the currently-selected sprint, by diffing
-  // the totals at the end of the sprint (the current main-dashboard totals)
-  // against the totals from the last published date BEFORE the sprint began.
-  // Only meaningful when a specific sprint is chosen (not "All sprints") and
-  // the main dashboard is showing published-snapshot data.
+  // Shows cumulative sprint growth from the previous sprint cutoff using the
+  // learner event dates in the CSV. This no longer depends on publication dates.
   function renderSprintGrowth(){
     const el = document.getElementById("sprintGrowthNote");
-    if (selectedSprint === "all" || !currentFullSnapshotDate || !lastTotals){
-      el.style.display = "none";
-      return;
-    }
-    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
-    if (!sprintDates.length){ el.style.display = "none"; return; }
-    const idx = availableDates.indexOf(sprintDates[0]);
-    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+    if (selectedSprint === "all" || !learners.length){ el.style.display="none"; return; }
 
-    if (!baselineDate){
-      el.textContent = "Earliest published sprint on record — no prior snapshot to compare against, so these are cumulative totals, not sprint-only growth.";
-      el.style.display = "block";
-      return;
+    const parts = String(selectedSprint).split("-S");
+    if (parts.length !== 2){ el.style.display="none"; return; }
+    const year = Number(parts[0]), sprintNum = Number(parts[1]);
+    const cutoff = sprintCutoff(year, sprintNum);
+    const currentRows = learners.filter(L => learnerExistsAt(L, cutoff)).map(L => learnerAtCutoff(L, cutoff));
+    const current = computeTotals(currentRows);
+
+    let baseline = { enrolled:0, activated:0, paid:0 };
+    let baselineLabel = "the start of the reporting period";
+    if (sprintNum > 1){
+      const previousCutoff = sprintCutoff(year, sprintNum-1);
+      baseline = computeTotals(learners.filter(L => learnerExistsAt(L, previousCutoff)).map(L => learnerAtCutoff(L, previousCutoff)));
+      baselineLabel = "the end of Sprint "+(sprintNum-1);
+    } else {
+      // For Sprint 1, compare against the end of Sprint 3 of the previous year.
+      const previousCutoff = sprintCutoff(year-1, 3);
+      baseline = computeTotals(learners.filter(L => learnerExistsAt(L, previousCutoff)).map(L => learnerAtCutoff(L, previousCutoff)));
+      baselineLabel = "the end of Sprint 3 of "+(year-1);
     }
 
-    loadAgg(baselineDate).then(payload => {
-      const b = payload.totals, c = lastTotals;
-      const sprintLabel = getSprintInfo(sprintDates[sprintDates.length-1]).longLabel;
-      el.innerHTML =
-        "<strong>New in " + escapeHtml(sprintLabel) + "</strong> (vs. last snapshot before it, " + escapeHtml(baselineDate) + "): " +
-        "+" + (c.enrolled - b.enrolled).toLocaleString() + " enrolled, " +
-        "+" + (c.activated - b.activated).toLocaleString() + " activated, " +
-        "+" + (c.paid - b.paid).toLocaleString() + " paid.";
-      el.style.display = "block";
-    }).catch(() => {
-      el.textContent = "Couldn't load the baseline snapshot needed to compute sprint growth.";
-      el.style.display = "block";
-    });
+    const label = year+" · Sprint "+sprintNum;
+    el.innerHTML = "<strong>Growth in "+escapeHtml(label)+"</strong> (cumulative position at sprint end vs. "+escapeHtml(baselineLabel)+"): " +
+      (current.enrolled-baseline.enrolled >= 0 ? "+" : "")+(current.enrolled-baseline.enrolled).toLocaleString()+" enrolled, " +
+      (current.activated-baseline.activated >= 0 ? "+" : "")+(current.activated-baseline.activated).toLocaleString()+" activated, " +
+      (current.paid-baseline.paid >= 0 ? "+" : "")+(current.paid-baseline.paid).toLocaleString()+" paid.";
+    el.style.display="block";
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
