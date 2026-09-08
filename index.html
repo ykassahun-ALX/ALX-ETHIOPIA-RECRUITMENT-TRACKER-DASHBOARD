@@ -121,6 +121,7 @@
   .section-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap;}
   .section-head h2{ font-size:16px; }
   .section-head .sub{ color: var(--muted); font-size:12.5px; }
+  .mode-note{ color: var(--activated); font-size:12px; font-weight:600; }
 
   /* ---------- Upload ---------- */
   #uploadCard{ margin-top: -28px; position:relative; z-index:2; }
@@ -214,7 +215,7 @@
   .stat-export-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
   #sprintGrowthNote{
     margin-top:14px; padding:10px 14px; border-radius:8px; background: var(--activated-soft);
-    color: var(--ink); font-size:12.5px; border:1px solid var(--border);
+    color: var(--ink); font-size:12.5px; border:1px solid var(--border); line-height:1.5;
   }
 
   /* ---------- Charts row ---------- */
@@ -295,6 +296,7 @@
   .badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; margin:1px 3px 1px 0; }
   .badge.prog{ background: var(--surface-alt); color: var(--accent-dark); }
   .badge.multi{ background: var(--warn-soft); color: var(--warn); }
+  .badge.new{ background: var(--activated-soft); color: var(--activated); }
   .module-line{ font-size:11.5px; color:var(--muted); display:block; }
   .yes{ color: var(--accent-dark); font-weight:700; }
   .no{ color: var(--muted); }
@@ -387,7 +389,7 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Pick a year/sprint to scope the whole dashboard to that window. Pick 2+ individual dates below to compare day-over-day change.</span>
+        <span class="sub">Pick a specific sprint to scope the ENTIRE dashboard below to just what changed during that sprint. Pick 2+ individual dates to compare day-over-day change instead.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <select id="yearFilter" style="max-width:120px">
@@ -404,6 +406,7 @@
           <div class="date-dropdown-panel" id="dateDropdownPanel" style="display:none"></div>
         </div>
       </div>
+      <div id="sprintGrowthNote" style="display:none"></div>
       <div id="trendWrap" style="display:none; margin-top:16px;">
         <div id="trendFilterNote" class="sub" style="display:none; margin-bottom:10px;"></div>
         <div class="chart-box chart-box-md"><canvas id="trendChart"></canvas></div>
@@ -478,12 +481,12 @@
           <div class="footnote">enrolled in 2+ programs</div>
         </div>
       </div>
-      <div id="sprintGrowthNote" style="display:none"></div>
     </section>
 
     <section class="card">
       <div class="section-head">
         <h2>Enrolled vs. Activated vs. Paid, by country</h2>
+        <span class="sub mode-note" id="barChartModeNote" style="display:none"></span>
       </div>
       <div class="chart-box chart-box-md"><canvas id="barChart"></canvas></div>
       <div class="legend-note">
@@ -496,6 +499,7 @@
     <section class="card">
       <div class="section-head">
         <h2>Country leaderboard</h2>
+        <span class="sub mode-note" id="scoreboardModeNote" style="display:none"></span>
         <div class="sort-select">
           Rank by
           <select id="rankMetric">
@@ -511,13 +515,16 @@
 
     <section>
       <div class="card gender-card">
-        <div class="section-head"><h2>Gender split</h2></div>
+        <div class="section-head">
+          <h2>Gender split</h2>
+          <span class="sub mode-note" id="genderModeNote" style="display:none"></span>
+        </div>
         <div class="gender-flex">
           <div class="chart-box chart-box-donut">
             <canvas id="genderChart"></canvas>
             <div class="donut-center">
               <div class="donut-center-value num" id="genderCenterValue">0</div>
-              <div class="donut-center-label">Learners</div>
+              <div class="donut-center-label" id="donutCenterLabel">Learners</div>
             </div>
           </div>
           <div id="genderLegend" class="gender-legend"></div>
@@ -530,6 +537,7 @@
         <h2>Learner directory</h2>
         <span class="sub" id="directoryCount">0 learners</span>
       </div>
+      <div class="sub mode-note" id="directoryModeNote" style="display:none; margin-bottom:10px;"></div>
       <div class="table-toolbar">
         <input type="text" id="searchBox" placeholder="Search email or name…" />
         <select id="directoryCountryFilter" style="max-width:220px"><option value="all">All countries</option></select>
@@ -541,7 +549,7 @@
             <tr>
               <th>Email</th><th>Name</th><th>Gender</th><th>Country</th>
               <th># Programs</th><th>Progress</th><th>Health status</th>
-              <th>Activated</th><th>Paid</th>
+              <th id="thActivated">Activated</th><th id="thPaid">Paid</th>
             </tr>
           </thead>
           <tbody id="tableBody"></tbody>
@@ -592,7 +600,23 @@
   "use strict";
 
   // ---------------- State ----------------
-  let learners = [];          // full array of learner objects
+  // `cumulativeLearners` is always the full, as-of-date learner list for
+  // whatever date the main dashboard is currently anchored to (currentFullSnapshotDate).
+  // `deltaLearners` is derived from it (only populated when a specific sprint is
+  // selected) and holds one row per learner who had ANY status change during
+  // that sprint (newly enrolled / newly activated / newly paid / newly graduated
+  // / newly multi-program), with the boolean fields carrying the DELTA meaning
+  // instead of the cumulative one.
+  // `learners` is whichever of the two is currently "live" and feeds every
+  // downstream render function (stats, charts, scoreboard, directory) — this is
+  // the single switch that makes sprint selection affect the WHOLE dashboard.
+  let cumulativeLearners = [];
+  let deltaLearners = [];
+  let learners = [];
+  let sprintDeltaActive = false;   // true only when a specific sprint is chosen AND a baseline snapshot exists
+  let sprintBaselineDate = null;   // the last published date before the selected sprint began
+  const fullLearnersCache = new Map(); // date -> {learners, publishedAt}, avoids re-fetching the same day twice
+
   let allPrograms = [];        // sorted list of program names
   let allCountries = [];       // sorted list of country names (by enrollment)
   let allCourses = [];         // sorted list of "Program — Course" strings
@@ -606,11 +630,11 @@
   let trendChartRef = null;
   let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
   let selectedDates = new Set();    // dates currently chosen for comparison
-  const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
+  const snapshotsCache = new Map(); // date -> agg payload, avoids re-fetching
   let lastTrendDates = null;        // for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
-  let viewMode = "empty";     // "empty" | "full" (admin's live CSV) | "summary" (published aggregate)
+  let viewMode = "empty";     // "empty" | "full" (admin's live CSV / published snapshot) | "summary" (legacy aggregate-only)
   let publishedAgg = null;    // holds the aggregate payload when viewMode === "summary"
   let isAdmin = false;
   // NOTE FOR WHOEVER DEPLOYS THIS: this is a soft, cosmetic gate only — anyone can
@@ -621,10 +645,10 @@
   let lastUpdated = null;       // Date object
   let lastUpdatedSource = null; // "published" | "local"
 
-  // which published date the *main* dashboard (stat cards / bar chart / scoreboard /
-  // gender chart / directory) is currently built from. Kept separate from
-  // `selectedDates` (which can hold many dates for the trend-comparison chart only)
-  // so we always know whether the main dashboard needs to be reloaded.
+  // which published date the main dashboard is currently anchored to. Kept
+  // separate from `selectedDates` (which can hold many dates, for the
+  // trend-comparison chart only) so we always know whether the main dashboard
+  // needs to be reloaded.
   let currentFullSnapshotDate = null;
 
   // ---------------- DOM refs ----------------
@@ -663,10 +687,10 @@
     // charts bake colors into their config at creation time, so redraw them on theme change
     if (viewMode === "full"){
       const filtered = getFiltered();
-      renderGenderChart(computeGenderCounts(filtered));
-      renderBarChart(computeCountryAgg(filtered));
+      renderGenderChart(computeGenderCounts(filtered, sprintDeltaActive), sprintDeltaActive);
+      renderBarChart(computeCountryAgg(filtered, sprintDeltaActive));
     } else if (viewMode === "summary" && publishedAgg){
-      renderGenderChart(new Map(Object.entries(publishedAgg.gender)));
+      renderGenderChart(new Map(Object.entries(publishedAgg.gender)), false);
       renderBarChart(new Map(Object.entries(publishedAgg.byCountry)));
     }
     if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
@@ -724,7 +748,7 @@
 
   // ---------------- Admin gate ----------------
   function updateEmptyState(){
-    const hasData = learners.length > 0 || viewMode === "summary";
+    const hasData = cumulativeLearners.length > 0 || viewMode === "summary";
     emptyStateAdmin.style.display = (!hasData && isAdmin) ? "block" : "none";
     emptyStatePublic.style.display = (!hasData && !isAdmin) ? "block" : "none";
   }
@@ -801,7 +825,7 @@
   }
 
   document.getElementById("publishBtn").addEventListener("click", () => {
-    if (!learners.length){
+    if (!cumulativeLearners.length){
       showToast("Load a CSV first, then publish the snapshot.");
       return;
     }
@@ -809,12 +833,12 @@
     const dateStr = todayDateString();
 
     // chunk the full learner array so no single file exceeds GitHub's upload limit
-    const fullSize = JSON.stringify(learners).length;
+    const fullSize = JSON.stringify(cumulativeLearners).length;
     const numParts = Math.max(1, Math.ceil(fullSize / CHUNK_TARGET_BYTES));
-    const chunkLen = Math.ceil(learners.length / numParts);
+    const chunkLen = Math.ceil(cumulativeLearners.length / numParts);
     const files = [];
     for (let p = 0; p < numParts; p++){
-      const slice = learners.slice(p*chunkLen, (p+1)*chunkLen);
+      const slice = cumulativeLearners.slice(p*chunkLen, (p+1)*chunkLen);
       files.push({
         filename: "data-" + dateStr + "-part" + (p+1) + ".json",
         obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
@@ -825,10 +849,10 @@
       filename: "agg-" + dateStr + ".json",
       obj: {
         date: dateStr, publishedAt: publishedAt.toISOString(),
-        totals: computeTotals(learners),
-        gender: Object.fromEntries(computeGenderCounts(learners)),
-        byCountry: Object.fromEntries(computeCountryAgg(learners)),
-        byProgram: Object.fromEntries(computeProgramAgg(learners))
+        totals: computeTotals(cumulativeLearners),
+        gender: Object.fromEntries(computeGenderCounts(cumulativeLearners, false)),
+        byCountry: Object.fromEntries(computeCountryAgg(cumulativeLearners, false)),
+        byProgram: Object.fromEntries(computeProgramAgg(cumulativeLearners))
       }
     });
 
@@ -859,6 +883,29 @@
     return fetch(noCacheUrl("agg-" + date + ".json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("missing " + date); return res.json(); })
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
+  }
+
+  // ---- full per-learner loader (for the main dashboard AND sprint-growth diffing) ----
+  // Fetches and merges every part file for a given date. Cached so switching
+  // sprints back and forth, or diffing against the same baseline twice, doesn't
+  // re-download anything.
+  function fetchFullLearnersForDate(date){
+    if (fullLearnersCache.has(date)) return Promise.resolve(fullLearnersCache.get(date));
+    const parts = datePartsMap.get(date) || 1;
+    const fetches = [];
+    for (let p = 1; p <= parts; p++){
+      fetches.push(
+        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
+          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
+      );
+    }
+    return Promise.all(fetches).then(chunks => {
+      let merged = [];
+      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
+      const payload = { learners: merged, publishedAt: chunks[0] && chunks[0].publishedAt };
+      fullLearnersCache.set(date, payload);
+      return payload;
+    });
   }
 
   // ---------------- Sprints (ALX calendar: Jan-Apr, May-Aug, Sep-Dec) ----------------
@@ -914,27 +961,29 @@
 
   // Centralizes what happens whenever the year/sprint scope, or the set of
   // selected dates, changes: (1) recompute which dates are visible in the date
-  // dropdown, (2) redraw the historical trend chart/table for whatever's
-  // selected, and (3) reload the *entire* main dashboard (stat cards, bar
-  // chart, scoreboard, gender chart, directory) from the most recent date
-  // inside the current selection. Every filter control below calls this one
-  // function so nothing can drift out of sync again.
+  // dropdown, (2) redraw the historical trend chart/table, and (3) reload/recompute
+  // the ENTIRE main dashboard for the current selection. Every filter control
+  // below calls this one function so nothing can drift out of sync.
   function applySnapshotSelection(){
     buildDateChips();
     loadAndRenderSelectedDates();
     syncMainDashboardToSelection();
   }
 
-  // Ensures the main dashboard (everything except the trend-comparison
-  // section) reflects the most recent date within the current selection —
-  // this is what actually makes the Year/Sprint filters "do something" beyond
-  // the trend chart.
+  // Ensures the main dashboard (stat cards, bar chart, scoreboard, gender
+  // donut, directory) reflects the current Year/Sprint/Date selection. If the
+  // underlying "as of" date hasn't changed, we still need to recompute because
+  // the SPRINT choice itself (and therefore the sprint-growth baseline) may
+  // have changed independently of which date is loaded.
   function syncMainDashboardToSelection(){
     const dates = [...selectedDates].sort();
     if (!dates.length) return;
     const target = dates[dates.length - 1]; // most recent of whatever's selected
-    if (target === currentFullSnapshotDate) return; // already showing this date
-    loadFullSnapshotForDate(target);
+    if (target === currentFullSnapshotDate){
+      applySprintModeAndRender();
+    } else {
+      loadFullSnapshotForDate(target);
+    }
   }
 
   document.getElementById("yearFilter").addEventListener("change", (e) => {
@@ -1058,9 +1107,8 @@
       : sorted.length + " dates selected";
   }
 
-  // drives ONLY the historical trend chart/table — the main dashboard (stat
-  // cards, charts, filters, directory) is kept in sync separately by
-  // syncMainDashboardToSelection() / loadFullSnapshotForDate()
+  // drives ONLY the historical trend chart/table — the main dashboard is kept
+  // in sync separately by syncMainDashboardToSelection() / applySprintModeAndRender()
   function loadAndRenderSelectedDates(){
     const dates = [...selectedDates].sort();
     Promise.all(dates.map(loadAgg)).then(payloads => {
@@ -1170,30 +1218,95 @@
     });
   }
 
-  // fetches and merges every part file for a given date, then feeds the result
-  // through the exact same pipeline a live CSV upload uses — so Executive View
-  // gets the full filterable dashboard, not just aggregate counts
+  // loads the full per-learner dataset for a date and makes it the dashboard's
+  // current "as of" snapshot, then figures out whether sprint-growth mode
+  // should be active for it
   function loadFullSnapshotForDate(date){
-    const parts = datePartsMap.get(date) || 1;
-    const fetches = [];
-    for (let p = 1; p <= parts; p++){
-      fetches.push(
-        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
-          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
-      );
-    }
-    return Promise.all(fetches).then(chunks => {
-      let merged = [];
-      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
-      learners = merged;
+    return fetchFullLearnersForDate(date).then(payload => {
+      cumulativeLearners = payload.learners;
       currentFullSnapshotDate = date;
-      finalizeLearnersData();
-      renderAll();
-      const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
-      setLastUpdated(publishedAt, "published");
-      document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
+      applySprintModeAndRender(payload.publishedAt);
     }).catch(() => {
       showToast("Couldn't load the full snapshot for " + date + ".");
+    });
+  }
+
+  // Builds a per-learner diff between `currentList` (as of the sprint's end)
+  // and `baselineMap` (as of right before the sprint started). Only learners
+  // with at least one status change during the sprint are included. Each
+  // returned row carries the CURRENT country/program/gender info (so the
+  // existing country/program filter chips work unchanged) but DELTA booleans
+  // for enrolled/activated/paid/graduated/multi, so every downstream function
+  // that reads L.activated, L.paid, etc. automatically shows "new this sprint"
+  // instead of "cumulative as of this date".
+  function computeDeltaLearners(currentList, baselineMap){
+    const rows = [];
+    currentList.forEach(L => {
+      const base = baselineMap.get(L.email);
+      const isNewEnrolled = !base;
+      const wasActivated = base ? base.activated : false;
+      const wasPaid = base ? base.paid : false;
+      const wasGraduated = base ? base.graduated : false;
+      const wasMulti = base ? base.multi : false;
+      const isNewActivated = !!L.activated && !wasActivated;
+      const isNewPaid = !!L.paid && !wasPaid;
+      const isNewGraduated = !!L.graduated && !wasGraduated;
+      const isNewMulti = !!L.multi && !wasMulti;
+      if (!(isNewEnrolled || isNewActivated || isNewPaid || isNewGraduated || isNewMulti)) return;
+      rows.push({
+        email: L.email, first: L.first, last: L.last, gender: L.gender,
+        country: L.country, region: L.region, programs: L.programs,
+        enrolled: isNewEnrolled, activated: isNewActivated, paid: isNewPaid,
+        graduated: isNewGraduated, multi: isNewMulti
+      });
+    });
+    return rows;
+  }
+
+  // Decides whether the currently-selected sprint should put the whole
+  // dashboard into "sprint growth" mode, and if so, fetches the baseline
+  // snapshot and computes the diff. Always ends by (re)rendering everything.
+  function applySprintModeAndRender(publishedAt){
+    finalizeLearnersData(); // rebuilds program/country/module filter option lists from cumulativeLearners
+
+    function finish(){
+      learners = sprintDeltaActive ? deltaLearners : cumulativeLearners;
+      renderAll();
+      if (publishedAt) setLastUpdated(new Date(publishedAt), "published");
+      document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
+    }
+
+    if (selectedSprint === "all"){
+      sprintDeltaActive = false;
+      deltaLearners = [];
+      sprintBaselineDate = null;
+      finish();
+      return;
+    }
+
+    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
+    const idx = sprintDates.length ? availableDates.indexOf(sprintDates[0]) : -1;
+    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+    sprintBaselineDate = baselineDate;
+
+    if (!baselineDate){
+      // earliest sprint on record — nothing published before it to diff against
+      sprintDeltaActive = false;
+      deltaLearners = [];
+      finish();
+      return;
+    }
+
+    fetchFullLearnersForDate(baselineDate).then(basePayload => {
+      const baselineMap = new Map(basePayload.learners.map(L => [L.email, L]));
+      deltaLearners = computeDeltaLearners(cumulativeLearners, baselineMap);
+      sprintDeltaActive = true;
+      finish();
+    }).catch(() => {
+      sprintDeltaActive = false;
+      deltaLearners = [];
+      finish();
+      showToast("Couldn't load the baseline snapshot (" + baselineDate + ") needed for sprint growth — showing cumulative totals instead.");
     });
   }
 
@@ -1276,15 +1389,18 @@
           page = 1;
 
           aggregate(parsed.data);
-          // a locally-loaded CSV isn't a published snapshot date, so it no
-          // longer corresponds to any entry the year/sprint pickers know about
+          // a locally-loaded CSV isn't a published snapshot date, so sprint
+          // growth (which needs a baseline snapshot) doesn't apply to it
           currentFullSnapshotDate = null;
+          sprintDeltaActive = false;
+          deltaLearners = [];
+          learners = cumulativeLearners;
           spinner.classList.remove("show");
           fileStatus.classList.add("ok");
-          fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + learners.length.toLocaleString() + " unique learners";
+          fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + cumulativeLearners.length.toLocaleString() + " unique learners";
           setLastUpdated(new Date(), "local");
           document.getElementById("snapshotsSection").style.display = "none";
-          renderAll(true);
+          renderAll();
         }));
       };
       reader.onerror = function(){
@@ -1353,14 +1469,14 @@
       }
     }
 
-    // finalize into plain arrays for fast repeated filtering
-    learners = [];
+    // finalize into a plain array for fast repeated filtering
+    const built = [];
     for (const L of map.values()){
       const progArr = [];
       for (const [name, info] of L.programs.entries()){
         progArr.push({ program: name, course: info.name, status: info.status, health: info.health });
       }
-      learners.push({
+      built.push({
         email: L.email, first: L.first, last: L.last, gender: L.gender,
         country: L.country, region: L.region,
         activated: L.activated, paid: L.paid, graduated: L.graduated,
@@ -1368,16 +1484,19 @@
       });
     }
 
+    cumulativeLearners = built;
     finalizeLearnersData();
   }
 
-  // (re)computes program/country/course option lists from whatever is currently in
-  // `learners` — used after a fresh CSV parse AND after loading a published snapshot
+  // (re)computes program/country/course option lists from `cumulativeLearners`
+  // — always the FULL as-of-date set, regardless of whether sprint-growth mode
+  // is currently narrowing what's actually rendered, so the filter chips never
+  // shrink just because a sprint delta happens to be small.
   function finalizeLearnersData(){
     const progCount = new Map();
     const countryCount = new Map();
     const courseSet = new Set();
-    for (const L of learners){
+    for (const L of cumulativeLearners){
       for (const p of L.programs){
         progCount.set(p.program, (progCount.get(p.program)||0)+1);
         if (p.course !== "n/a") courseSet.add(p.program + " — " + p.course);
@@ -1391,7 +1510,7 @@
     buildFilterUI();
   }
 
-  // ---------------- Filter UI construction (only rebuilt on new upload) ----------------
+  // ---------------- Filter UI construction (only rebuilt on new upload/snapshot) ----------------
   function buildFilterUI(){
     const progWrap = document.getElementById("programChips");
     progWrap.innerHTML = "";
@@ -1421,6 +1540,10 @@
       opt.value = c; opt.textContent = c;
       dirCountrySelect.appendChild(opt);
     });
+
+    // re-apply active state to chips that survive the rebuild (e.g. after switching sprints)
+    document.querySelectorAll("#programChips .chip").forEach(chip => chip.classList.toggle("active", filters.programs.has(chip.textContent)));
+    document.querySelectorAll("#countryChips .chip").forEach(chip => chip.classList.toggle("active", filters.countries.has(chip.textContent)));
   }
 
   // keeps the directory's single-select country dropdown in sync with the
@@ -1435,6 +1558,7 @@
     const el = document.createElement("div");
     el.className = "chip";
     el.textContent = label;
+    if (filters[setName].has(label)) el.classList.add("active");
     el.addEventListener("click", () => {
       const set = filters[setName];
       if (set.has(label)) set.delete(label); else set.add(label);
@@ -1481,22 +1605,30 @@
   });
 
   document.getElementById("rankMetric").addEventListener("change", () => {
-    if (viewMode === "full") renderScoreboard(computeCountryAgg(getFiltered()), true);
+    if (viewMode === "full") renderScoreboard(computeCountryAgg(getFiltered(), sprintDeltaActive), true);
     else if (viewMode === "summary" && publishedAgg) renderScoreboard(new Map(Object.entries(publishedAgg.byCountry)), false);
   });
 
   document.getElementById("prevPage").addEventListener("click", () => { if (page>1){ page--; renderTable(); }});
   document.getElementById("nextPage").addEventListener("click", () => { page++; renderTable(); });
 
-  // shared builder — reused by the directory export and each per-card export below
+  // shared builder — reused by the directory export and each per-card export below.
+  // Works for both cumulative learner rows and sprint-delta rows, since both
+  // shapes carry the same field names (activated/paid meaning "new this sprint"
+  // when sprintDeltaActive is true).
   function learnersToCsv(rows){
-    const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status","Activated","Paid"];
+    const activatedHeader = sprintDeltaActive ? "Newly activated" : "Activated";
+    const paidHeader = sprintDeltaActive ? "Newly paid" : "Paid";
+    const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status",activatedHeader,paidHeader];
+    if (sprintDeltaActive) header.splice(5, 0, "Newly enrolled");
     const lines = [header.join(",")];
     rows.forEach(L => {
       const progs = L.programs.map(p=>p.program).join(" | ");
       const mods = L.programs.map(p=>p.program+": "+p.course+" ("+p.status+")").join(" | ");
       const healths = L.programs.map(p=>p.program+": "+p.health).join(" | ");
-      const cells = [L.email, L.first, L.last, L.gender, L.country, L.programs.length, progs, mods, healths, L.activated?"Yes":"No", L.paid?"Yes":"No"];
+      const cells = [L.email, L.first, L.last, L.gender, L.country, L.programs.length];
+      if (sprintDeltaActive) cells.push(L.enrolled ? "Yes" : "No");
+      cells.push(progs, mods, healths, L.activated?"Yes":"No", L.paid?"Yes":"No");
       lines.push(cells.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(","));
     });
     return lines.join("\n");
@@ -1511,11 +1643,12 @@
   }
 
   document.getElementById("exportBtn").addEventListener("click", () => {
-    downloadCsvBlob(learnersToCsv(getFiltered()), "learner_outreach_export.csv");
+    const filename = sprintDeltaActive ? "learner_sprint_growth_export.csv" : "learner_outreach_export.csv";
+    downloadCsvBlob(learnersToCsv(getFiltered()), filename);
   });
 
   const STAT_METRIC_FILTERS = {
-    enrolled: rows => rows,
+    enrolled: rows => sprintDeltaActive ? rows.filter(r => r.enrolled) : rows,
     activated: rows => rows.filter(r => r.activated),
     paid: rows => rows.filter(r => r.paid),
     graduated: rows => rows.filter(r => r.graduated),
@@ -1525,7 +1658,7 @@
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (!learners.length){
-        showToast("Load data first, then export.");
+        showToast("No matching learners to export.");
         return;
       }
       const metric = btn.dataset.metric;
@@ -1534,7 +1667,8 @@
         showToast("No " + metric + " learners match the current filters.");
         return;
       }
-      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + "_" + todayDateString() + ".csv");
+      const suffix = sprintDeltaActive ? "_sprint_growth" : "";
+      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + suffix + "_" + todayDateString() + ".csv");
       showToast("Downloaded " + rows.length.toLocaleString() + " " + metric + " learner" + (rows.length===1?"":"s") + " (CSV).");
     });
   });
@@ -1566,31 +1700,33 @@
   // ---------------- Render orchestration ----------------
   function renderAll(){
     updateEmptyState();
-    if (!learners.length) return;
+    if (!cumulativeLearners.length) return;
     viewMode = "full";
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
     const filtered = getFiltered();
-    renderStats(computeTotals(filtered));
-    renderGenderChart(computeGenderCounts(filtered));
-    renderBarChart(computeCountryAgg(filtered));
-    renderScoreboard(computeCountryAgg(filtered), true);
+    const totals = sprintDeltaActive ? computeDeltaTotals(filtered) : computeTotals(filtered);
+    renderStats(totals, sprintDeltaActive);
+    renderGenderChart(computeGenderCounts(filtered, sprintDeltaActive), sprintDeltaActive);
+    renderBarChart(computeCountryAgg(filtered, sprintDeltaActive));
+    renderScoreboard(computeCountryAgg(filtered, sprintDeltaActive), true);
     renderTable();
-    renderSprintGrowth();
+    renderSprintModeBanner();
+    updateModeNotes();
   }
 
   // Public/summary mode: only aggregate counts are available (no per-learner
   // rows), so filters and the learner directory are hidden — there's nothing
-  // for them to operate on.
+  // for them to operate on. Sprint-growth mode never applies here.
   function renderPublicSummary(payload){
     viewMode = "summary";
     publishedAgg = payload;
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
-    renderStats(payload.totals);
-    renderGenderChart(new Map(Object.entries(payload.gender)));
+    renderStats(payload.totals, false);
+    renderGenderChart(new Map(Object.entries(payload.gender)), false);
     const countryAgg = new Map(Object.entries(payload.byCountry));
     renderBarChart(countryAgg);
     renderScoreboard(countryAgg, false);
@@ -1607,58 +1743,82 @@
     };
   }
 
-  function renderStats(totals){
+  // Sprint-growth version: unlike computeTotals, "enrolled" here must be
+  // filtered too (rows.length would count everyone TOUCHED this sprint, not
+  // just those newly enrolled), so every figure is independently the count of
+  // learners who newly reached that particular status during the sprint.
+  function computeDeltaTotals(rows){
+    return {
+      enrolled: rows.filter(r=>r.enrolled).length,
+      activated: rows.filter(r=>r.activated).length,
+      paid: rows.filter(r=>r.paid).length,
+      graduated: rows.filter(r=>r.graduated).length,
+      multi: rows.filter(r=>r.multi).length
+    };
+  }
+
+  function renderStats(totals, deltaMode){
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
-    const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
-    document.getElementById("statEnrolledPct").textContent = anyFilterActive
-      ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
-      : "matching current filters";
     document.getElementById("statActivated").textContent = activated.toLocaleString();
-    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
-    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
     document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
+
+    if (deltaMode){
+      document.getElementById("statEnrolledPct").textContent = "newly enrolled this sprint";
+      document.getElementById("statActivatedPct").textContent = "newly activated this sprint";
+      document.getElementById("statPaidPct").textContent = "newly paid this sprint";
+      document.getElementById("statGraduatedPct").textContent = "newly graduated this sprint";
+    } else {
+      const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
+      document.getElementById("statEnrolledPct").textContent = anyFilterActive
+        ? pct(enrolled, cumulativeLearners.length) + "% of total enrolled (" + cumulativeLearners.length.toLocaleString() + ")"
+        : "matching current filters";
+      document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
+      document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
+      document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
+    }
   }
 
-  // Shows how much was GAINED during the currently-selected sprint, by diffing
-  // the totals at the end of the sprint (the current main-dashboard totals)
-  // against the totals from the last published date BEFORE the sprint began.
-  // Only meaningful when a specific sprint is chosen (not "All sprints") and
-  // the main dashboard is showing published-snapshot data.
-  function renderSprintGrowth(){
+  // Small banner above the filters explaining what mode the whole dashboard is
+  // currently in — this replaces the old "just a text note" behavior; every
+  // chart/list below it now actually reflects the same scope this describes.
+  function renderSprintModeBanner(){
     const el = document.getElementById("sprintGrowthNote");
-    if (selectedSprint === "all" || !currentFullSnapshotDate || !lastTotals){
-      el.style.display = "none";
+    if (!sprintDeltaActive){
+      if (selectedSprint !== "all" && !sprintBaselineDate){
+        el.textContent = "Earliest published sprint on record — no prior snapshot to diff against, so the dashboard below is showing cumulative totals instead of sprint-only growth.";
+        el.style.display = "block";
+      } else {
+        el.style.display = "none";
+      }
       return;
     }
     const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
-    if (!sprintDates.length){ el.style.display = "none"; return; }
-    const idx = availableDates.indexOf(sprintDates[0]);
-    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+    const sprintLabel = sprintDates.length ? getSprintInfo(sprintDates[sprintDates.length-1]).longLabel : selectedSprint;
+    el.innerHTML =
+      "<strong>Showing sprint growth for " + escapeHtml(sprintLabel) + "</strong> — every stat card, chart, the leaderboard, and the directory below reflect only what changed since the last snapshot before it (" +
+      escapeHtml(sprintBaselineDate) + "). Program/Country/Module filters still apply on top of this. Switch back to \"All sprints\" for cumulative totals.";
+    el.style.display = "block";
+  }
 
-    if (!baselineDate){
-      el.textContent = "Earliest published sprint on record — no prior snapshot to compare against, so these are cumulative totals, not sprint-only growth.";
-      el.style.display = "block";
-      return;
-    }
-
-    loadAgg(baselineDate).then(payload => {
-      const b = payload.totals, c = lastTotals;
-      const sprintLabel = getSprintInfo(sprintDates[sprintDates.length-1]).longLabel;
-      el.innerHTML =
-        "<strong>New in " + escapeHtml(sprintLabel) + "</strong> (vs. last snapshot before it, " + escapeHtml(baselineDate) + "): " +
-        "+" + (c.enrolled - b.enrolled).toLocaleString() + " enrolled, " +
-        "+" + (c.activated - b.activated).toLocaleString() + " activated, " +
-        "+" + (c.paid - b.paid).toLocaleString() + " paid.";
-      el.style.display = "block";
-    }).catch(() => {
-      el.textContent = "Couldn't load the baseline snapshot needed to compute sprint growth.";
-      el.style.display = "block";
+  // Small "mode" labels shown next to individual card headers, so it's obvious
+  // at a glance which sections are currently showing sprint-only growth.
+  function updateModeNotes(){
+    const label = sprintDeltaActive ? "New activity this sprint" : "";
+    ["barChartModeNote","scoreboardModeNote","directoryModeNote"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = label;
+      el.style.display = label ? (id === "directoryModeNote" ? "block" : "inline") : "none";
     });
+    const genderNote = document.getElementById("genderModeNote");
+    if (genderNote){
+      genderNote.textContent = sprintDeltaActive ? "New enrollments only" : "";
+      genderNote.style.display = sprintDeltaActive ? "inline" : "none";
+    }
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
@@ -1672,13 +1832,19 @@
     return map[g] || "•";
   }
 
-  function computeGenderCounts(rows){
+  // In sprint-growth mode, the gender split describes NEWLY ENROLLED learners
+  // only (gender doesn't really "activate" or "pay", so the most meaningful
+  // sprint-scoped reading is: who's newly joining this sprint, by gender).
+  function computeGenderCounts(rows, deltaMode){
     const counts = new Map();
-    rows.forEach(r => counts.set(r.gender, (counts.get(r.gender)||0)+1));
+    rows.forEach(r => {
+      if (deltaMode && !r.enrolled) return;
+      counts.set(r.gender, (counts.get(r.gender)||0)+1);
+    });
     return counts;
   }
 
-  function renderGenderChart(counts){
+  function renderGenderChart(counts, deltaMode){
     const rawLabels = [...counts.keys()];
     const data = rawLabels.map(l=>counts.get(l));
     const total = data.reduce((a,b)=>a+b,0) || 1;
@@ -1688,6 +1854,7 @@
     const c = chartColors();
 
     document.getElementById("genderCenterValue").textContent = total.toLocaleString();
+    document.getElementById("donutCenterLabel").textContent = deltaMode ? "New" : "Learners";
 
     const legendWrap = document.getElementById("genderLegend");
     legendWrap.innerHTML = "";
@@ -1716,13 +1883,19 @@
     });
   }
 
-  function computeCountryAgg(rows){
+  // `deltaMode` controls what "enrolled" means per country: the raw row count
+  // (cumulative) or only rows newly enrolled this sprint (delta). Activated/paid
+  // always come from whatever boolean the row already carries, which is itself
+  // cumulative or delta depending on which learner array was passed in.
+  function computeCountryAgg(rows, deltaMode){
     const agg = new Map();
     rows.forEach(L => {
       if (L.country === "Other") return; // keep country views scoped to the 8 hub countries
       let g = agg.get(L.country);
       if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(L.country, g); }
-      g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
+      if (deltaMode){ if (L.enrolled) g.enrolled++; } else { g.enrolled++; }
+      if (L.activated) g.activated++;
+      if (L.paid) g.paid++;
     });
     return agg;
   }
@@ -1740,7 +1913,7 @@
   }
 
   function renderBarChart(groups){
-    const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0)
+    const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0 || groups.get(k).activated > 0 || groups.get(k).paid > 0)
       .sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
 
     const c = chartColors();
@@ -1780,7 +1953,7 @@
       enrolled: v.enrolled, activated: v.activated, paid: v.paid,
       convEnrolled: v.enrolled ? v.paid/v.enrolled : 0,
       convActivated: v.paid ? v.activated/v.paid : 0
-    })).filter(c => c.enrolled > 0);
+    })).filter(c => c.enrolled > 0 || c.activated > 0 || c.paid > 0);
 
     const metric = document.getElementById("rankMetric").value;
     list.sort((a,b) => b[metric] - a[metric]);
@@ -1794,6 +1967,11 @@
         '<span></span>' +
       '</div>';
 
+    if (!list.length){
+      board.innerHTML += '<div style="padding:16px 4px; color:var(--muted); font-size:12.5px;">No countries match the current filters' + (sprintDeltaActive ? " with any activity this sprint." : ".") + '</div>';
+      return;
+    }
+
     list.forEach((c, i) => {
       const lane = document.createElement("div");
       lane.className = "lane";
@@ -1803,8 +1981,8 @@
       let trackInner;
       if (metric === "enrolled"){
         // the one case with enough shared scale to show the activated/paid funnel inside the bar
-        const actWidth = c.enrolled ? (c.activated / c.enrolled) * 100 : 0;
-        const paidWidth = c.enrolled ? (c.paid / c.enrolled) * 100 : 0;
+        const actWidth = c.enrolled ? Math.min(100, (c.activated / c.enrolled) * 100) : 0;
+        const paidWidth = c.enrolled ? Math.min(100, (c.paid / c.enrolled) * 100) : 0;
         trackInner = '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
                      '<div class="seg-paid" style="width:'+paidWidth.toFixed(1)+'%"></div>';
       } else {
@@ -1846,7 +2024,11 @@
 
   function renderTable(){
     const rows = getFilteredWithSearch();
-    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + " learners";
+    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + (sprintDeltaActive ? " learners with sprint activity" : " learners");
+
+    document.getElementById("thActivated").textContent = sprintDeltaActive ? "Newly Activated" : "Activated";
+    document.getElementById("thPaid").textContent = sprintDeltaActive ? "Newly Paid" : "Paid";
+
     const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
     if (page > totalPages) page = totalPages;
     const startIdx = (page-1)*PAGE_SIZE;
@@ -1862,10 +2044,11 @@
       const progCountBadge = '<span class="'+countBadgeClass+'">'+progCount+'</span>';
       const moduleLines = L.programs.map(p => '<span class="module-line">'+escapeHtml(p.program)+': '+escapeHtml(p.course)+' ('+escapeHtml(p.status)+')</span>').join("");
       const healthLines = L.programs.map(p => '<span class="module-line">'+escapeHtml(p.program)+': '+escapeHtml(p.health)+'</span>').join("");
+      const newBadge = (sprintDeltaActive && L.enrolled) ? '<span class="badge new">NEW</span>' : '';
 
       tr.innerHTML =
         '<td>'+escapeHtml(L.email)+'</td>' +
-        '<td>'+escapeHtml((L.first+" "+L.last).trim() || "—")+'</td>' +
+        '<td>'+newBadge+escapeHtml((L.first+" "+L.last).trim() || "—")+'</td>' +
         '<td>'+escapeHtml(L.gender)+'</td>' +
         '<td>'+escapeHtml(L.country)+'</td>' +
         '<td>'+progCountBadge+'</td>' +
