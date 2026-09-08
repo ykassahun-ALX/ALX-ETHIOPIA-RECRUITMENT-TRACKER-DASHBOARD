@@ -935,13 +935,20 @@
     return true;
   }
 
-  // Which published date the main dashboard should anchor to: the most recent
-  // date implied by the current Year/Sprint scope, falling back to the latest
-  // individually-picked date, falling back to the latest date overall.
+  // Which published date the main dashboard should anchor to.
+  // FIX: previously this ignored `selectedDates` entirely whenever no
+  // Year/Sprint filter was active, so `scoped` always contained every
+  // published date and this function always returned the latest one —
+  // meaning picking a specific date in the Date dropdown never actually
+  // changed what the dashboard showed. Now it prefers whichever date(s)
+  // are explicitly checked in the Date dropdown (still respecting the
+  // current Year/Sprint scope), and only falls back to "latest in scope"
+  // when nothing is individually selected.
   function computeAnchorDate(){
+    const scopedSelected = availableDates.filter(d => dateInScope(d) && selectedDates.has(d));
+    if (scopedSelected.length) return scopedSelected[scopedSelected.length - 1];
     const scoped = availableDates.filter(dateInScope);
     if (scoped.length) return scoped[scoped.length - 1];
-    if (selectedDates.size) return [...selectedDates].sort().pop();
     return availableDates.length ? availableDates[availableDates.length - 1] : null;
   }
 
