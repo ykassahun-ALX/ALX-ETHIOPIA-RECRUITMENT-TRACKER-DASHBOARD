@@ -389,15 +389,23 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Pick a specific sprint to scope the ENTIRE dashboard below to just what changed during that sprint. Pick 2+ individual dates to compare day-over-day change instead.</span>
+        <span class="sub">Select 2+ Sprints, or 2+ Years, to compare them directly below — same Δ table as picking 2+ specific dates. Selecting exactly one Sprint also scopes the whole dashboard above to that sprint's growth.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-        <select id="yearFilter" style="max-width:120px">
-          <option value="all">All years</option>
-        </select>
-        <select id="sprintFilter" style="max-width:220px">
-          <option value="all">All sprints</option>
-        </select>
+        <div class="date-dropdown" id="yearDropdown">
+          <button type="button" id="yearDropdownTrigger" class="date-dropdown-trigger" style="min-width:140px">
+            <span id="yearDropdownLabel">All years</span>
+            <span class="date-dropdown-caret">▾</span>
+          </button>
+          <div class="date-dropdown-panel" id="yearDropdownPanel" style="display:none"></div>
+        </div>
+        <div class="date-dropdown" id="sprintDropdown">
+          <button type="button" id="sprintDropdownTrigger" class="date-dropdown-trigger" style="min-width:220px">
+            <span id="sprintDropdownLabel">All sprints</span>
+            <span class="date-dropdown-caret">▾</span>
+          </button>
+          <div class="date-dropdown-panel" id="sprintDropdownPanel" style="display:none"></div>
+        </div>
         <div class="date-dropdown" id="dateDropdown">
           <button type="button" id="dateDropdownTrigger" class="date-dropdown-trigger">
             <span id="dateDropdownLabel">Select dates…</span>
@@ -413,7 +421,7 @@
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
             <thead>
-              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
+              <tr><th id="trendDateHeader">Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
@@ -602,19 +610,18 @@
   // ---------------- State ----------------
   // `cumulativeLearners` is always the full, as-of-date learner list for
   // whatever date the main dashboard is currently anchored to (currentFullSnapshotDate).
-  // `deltaLearners` is derived from it (only populated when a specific sprint is
-  // selected) and holds one row per learner who had ANY status change during
-  // that sprint (newly enrolled / newly activated / newly paid / newly graduated
-  // / newly multi-program), with the boolean fields carrying the DELTA meaning
-  // instead of the cumulative one.
+  // `deltaLearners` is derived from it (only populated when exactly one sprint
+  // is selected) and holds one row per learner who had ANY status change during
+  // that sprint, with boolean fields carrying the DELTA meaning instead of the
+  // cumulative one.
   // `learners` is whichever of the two is currently "live" and feeds every
-  // downstream render function (stats, charts, scoreboard, directory) — this is
-  // the single switch that makes sprint selection affect the WHOLE dashboard.
+  // downstream render function (stats, charts, scoreboard, directory).
   let cumulativeLearners = [];
   let deltaLearners = [];
   let learners = [];
-  let sprintDeltaActive = false;   // true only when a specific sprint is chosen AND a baseline snapshot exists
-  let sprintBaselineDate = null;   // the last published date before the selected sprint began
+  let sprintDeltaActive = false;   // true only when exactly one sprint is selected AND a baseline snapshot exists
+  let sprintBaselineDate = null;   // the last published date before the active sprint began
+  let activeSprintKey = null;      // the single sprint key sprint-growth mode is currently scoped to
   const fullLearnersCache = new Map(); // date -> {learners, publishedAt}, avoids re-fetching the same day twice
 
   let allPrograms = [];        // sorted list of program names
@@ -628,10 +635,13 @@
   let genderChartRef = null;
   let barChartRef = null;
   let trendChartRef = null;
+
   let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
-  let selectedDates = new Set();    // dates currently chosen for comparison
+  let selectedDates = new Set();    // individual dates picked for date-level comparison / as scope fallback
+  let selectedYears = new Set();    // empty = "All years"; values are strings, e.g. "2026"
+  let selectedSprintKeys = new Set(); // empty = "All sprints"; values are keys, e.g. "2026-S2"
   const snapshotsCache = new Map(); // date -> agg payload, avoids re-fetching
-  let lastTrendDates = null;        // for redrawing the trend chart on theme change
+  let lastTrendRows = null;         // [{label, date}, ...] for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
   let viewMode = "empty";     // "empty" | "full" (admin's live CSV / published snapshot) | "summary" (legacy aggregate-only)
@@ -645,10 +655,7 @@
   let lastUpdated = null;       // Date object
   let lastUpdatedSource = null; // "published" | "local"
 
-  // which published date the main dashboard is currently anchored to. Kept
-  // separate from `selectedDates` (which can hold many dates, for the
-  // trend-comparison chart only) so we always know whether the main dashboard
-  // needs to be reloaded.
+  // which published date the main dashboard is currently anchored to.
   let currentFullSnapshotDate = null;
 
   // ---------------- DOM refs ----------------
@@ -693,7 +700,7 @@
       renderGenderChart(new Map(Object.entries(publishedAgg.gender)), false);
       renderBarChart(new Map(Object.entries(publishedAgg.byCountry)));
     }
-    if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
+    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads);
   }
   themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 
@@ -785,7 +792,7 @@
   // that limit. A small snapshots-index.json records, per date, how many parts
   // exist, so the page knows how many files to fetch and stitch back together.
   // A separate, tiny agg-YYYY-MM-DD.json (totals/gender/country only) is also
-  // published per day — that one is what powers the lightweight multi-day trend
+  // published per day — that one is what powers the lightweight trend
   // comparison, without needing to download every historical day's full data.
   const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
   let datePartsMap = new Map(); // date -> number of parts published for that date
@@ -844,7 +851,7 @@
         obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
       });
     }
-    // small aggregate file, used only for the historical trend chart
+    // small aggregate file, used only for the trend comparison
     files.push({
       filename: "agg-" + dateStr + ".json",
       obj: {
@@ -877,7 +884,7 @@
       });
   });
 
-  // ---- lightweight aggregate loader (for the historical trend chart only) ----
+  // ---- lightweight aggregate loader (for the trend comparison only) ----
   function loadAgg(date){
     if (snapshotsCache.has(date)) return Promise.resolve(snapshotsCache.get(date));
     return fetch(noCacheUrl("agg-" + date + ".json"), { cache: "no-store" })
@@ -886,9 +893,6 @@
   }
 
   // ---- full per-learner loader (for the main dashboard AND sprint-growth diffing) ----
-  // Fetches and merges every part file for a given date. Cached so switching
-  // sprints back and forth, or diffing against the same baseline twice, doesn't
-  // re-download anything.
   function fetchFullLearnersForDate(date){
     if (fullLearnersCache.has(date)) return Promise.resolve(fullLearnersCache.get(date));
     const parts = datePartsMap.get(date) || 1;
@@ -909,123 +913,224 @@
   }
 
   // ---------------- Sprints (ALX calendar: Jan-Apr, May-Aug, Sep-Dec) ----------------
-  let selectedYear = "all";
-  let selectedSprint = "all";
   function getSprintInfo(dateStr){
     const [year, month] = dateStr.split("-").map(Number);
     let sprintNum, range;
     if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
     else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
     else { sprintNum = 3; range = "Sep–Dec"; }
-    // key always includes the year so sprints from different years never merge.
-    // The label drops the year when a specific year is already chosen via the
-    // year filter (redundant otherwise); it's added back only under "All years",
-    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
     const shortLabel = "Sprint " + sprintNum + ": " + range;
     const longLabel = year + " · " + shortLabel;
     return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
   }
-  function buildYearOptions(){
-    const sel = document.getElementById("yearFilter");
-    const years = new Set();
-    availableDates.forEach(d => years.add(getSprintInfo(d).year));
-    const sortedYears = [...years].sort();
-    const prevValue = sel.value;
-    sel.innerHTML = '<option value="all">All years</option>';
-    sortedYears.forEach(y => {
-      const opt = document.createElement("option");
-      opt.value = y; opt.textContent = y;
-      sel.appendChild(opt);
-    });
-    if (sortedYears.map(String).includes(prevValue)) sel.value = prevValue;
-  }
-  function buildSprintOptions(){
-    const sel = document.getElementById("sprintFilter");
-    const seen = new Map();
-    availableDates.forEach(d => {
-      const s = getSprintInfo(d);
-      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
-      seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
-    });
-    const keys = [...seen.keys()].sort();
-    const prevValue = sel.value;
-    sel.innerHTML = '<option value="all">All sprints</option>';
-    keys.forEach(key => {
-      const opt = document.createElement("option");
-      opt.value = key; opt.textContent = seen.get(key);
-      sel.appendChild(opt);
-    });
-    if (keys.includes(prevValue)) sel.value = prevValue;
-    else sel.value = "all";
+
+  // true if a published date falls within the current Year/Sprint selection.
+  // Empty sets mean "no restriction" for that dimension.
+  function dateInScope(d){
+    const s = getSprintInfo(d);
+    if (selectedYears.size && !selectedYears.has(String(s.year))) return false;
+    if (selectedSprintKeys.size && !selectedSprintKeys.has(s.key)) return false;
+    return true;
   }
 
-  // Centralizes what happens whenever the year/sprint scope, or the set of
-  // selected dates, changes: (1) recompute which dates are visible in the date
-  // dropdown, (2) redraw the historical trend chart/table, and (3) reload/recompute
-  // the ENTIRE main dashboard for the current selection. Every filter control
-  // below calls this one function so nothing can drift out of sync.
+  // Which published date the main dashboard should anchor to: the most recent
+  // date implied by the current Year/Sprint scope, falling back to the latest
+  // individually-picked date, falling back to the latest date overall.
+  function computeAnchorDate(){
+    const scoped = availableDates.filter(dateInScope);
+    if (scoped.length) return scoped[scoped.length - 1];
+    if (selectedDates.size) return [...selectedDates].sort().pop();
+    return availableDates.length ? availableDates[availableDates.length - 1] : null;
+  }
+
+  // Decides what the trend comparison compares: 2+ selected sprints beat 2+
+  // selected years, which beat 2+ individually-picked dates. Each returned row
+  // is {label, date} — `date` is the representative (most recent) published
+  // date for that sprint/year/pick, `label` is what shows on the chart/table.
+  function computeCompareRows(){
+    if (selectedSprintKeys.size >= 2){
+      return [...selectedSprintKeys].sort().map(key => {
+        const datesForKey = availableDates.filter(d => getSprintInfo(d).key === key);
+        if (!datesForKey.length) return null;
+        const repDate = datesForKey[datesForKey.length - 1];
+        return { label: getSprintInfo(repDate).longLabel, date: repDate };
+      }).filter(Boolean);
+    }
+    if (selectedYears.size >= 2){
+      return [...selectedYears].map(Number).sort((a,b)=>a-b).map(year => {
+        const datesForYear = availableDates.filter(d => {
+          const s = getSprintInfo(d);
+          if (String(s.year) !== String(year)) return false;
+          if (selectedSprintKeys.size && !selectedSprintKeys.has(s.key)) return false;
+          return true;
+        });
+        if (!datesForYear.length) return null;
+        const repDate = datesForYear[datesForYear.length - 1];
+        return { label: String(year), date: repDate };
+      }).filter(Boolean);
+    }
+    if (selectedDates.size >= 2){
+      return [...selectedDates].sort().map(d => ({ label: d, date: d }));
+    }
+    return [];
+  }
+
+  function compareGranularityLabel(){
+    if (selectedSprintKeys.size >= 2) return "Sprint";
+    if (selectedYears.size >= 2) return "Year";
+    return "Date";
+  }
+
+  // Centralizes what happens whenever Year/Sprint/Date selection changes:
+  // rebuild all three dropdowns (each may prune the others' now-invalid picks),
+  // recompute the trend comparison, and resync the main dashboard.
   function applySnapshotSelection(){
+    buildYearDropdown();
+    buildSprintDropdown();
     buildDateChips();
-    loadAndRenderSelectedDates();
+    loadAndRenderComparison();
     syncMainDashboardToSelection();
   }
 
-  // Ensures the main dashboard (stat cards, bar chart, scoreboard, gender
-  // donut, directory) reflects the current Year/Sprint/Date selection. If the
-  // underlying "as of" date hasn't changed, we still need to recompute because
-  // the SPRINT choice itself (and therefore the sprint-growth baseline) may
-  // have changed independently of which date is loaded.
   function syncMainDashboardToSelection(){
-    const dates = [...selectedDates].sort();
-    if (!dates.length) return;
-    const target = dates[dates.length - 1]; // most recent of whatever's selected
+    const target = computeAnchorDate();
+    if (!target) return;
     if (target === currentFullSnapshotDate){
-      applySprintModeAndRender();
+      applySprintModeAndRender(); // date unchanged, but the sprint scope may have
     } else {
       loadFullSnapshotForDate(target);
     }
   }
 
-  document.getElementById("yearFilter").addEventListener("change", (e) => {
-    selectedYear = e.target.value;
-    selectedSprint = "all"; // sprint list depends on year, so reset it whenever the year changes
-    const inScope = availableDates.filter(d => selectedYear === "all" || String(getSprintInfo(d).year) === String(selectedYear));
-    selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
-    if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
+  function onSnapshotFilterChanged(){
     applySnapshotSelection();
-  });
-  document.getElementById("sprintFilter").addEventListener("change", (e) => {
-    selectedSprint = e.target.value;
-    // drop any selected dates that fall outside the newly chosen year/sprint
-    const inScope = availableDates.filter(d => {
-      const s = getSprintInfo(d);
-      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
-      return selectedSprint === "all" || s.key === selectedSprint;
-    });
-    selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
-    if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
-    applySnapshotSelection();
-  });
+  }
 
-  // outside-click-to-close is wired once here, not inside buildDateChips (which can
-  // run repeatedly whenever the sprint filter changes) — avoids stacking duplicate listeners
+  // ---------------- Dropdown open/close plumbing (shared by all three pickers) ----------------
+  function closeAllDropdownPanels(){
+    ["yearDropdownPanel","sprintDropdownPanel","dateDropdownPanel"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+  }
   document.addEventListener("click", (e) => {
-    const panel = document.getElementById("dateDropdownPanel");
-    if (panel && !document.getElementById("dateDropdown").contains(e.target)) panel.style.display = "none";
-  });
-
-  function buildDateChips(){
-    buildYearOptions();
-    buildSprintOptions();
-    const trigger = document.getElementById("dateDropdownTrigger");
-    const panel = document.getElementById("dateDropdownPanel");
-    const visibleDates = availableDates.filter(d => {
-      const s = getSprintInfo(d);
-      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
-      if (selectedSprint !== "all" && s.key !== selectedSprint) return false;
-      return true;
+    ["yearDropdown","sprintDropdown","dateDropdown"].forEach(containerId => {
+      const container = document.getElementById(containerId);
+      if (container && !container.contains(e.target)){
+        const panel = container.querySelector(".date-dropdown-panel");
+        if (panel) panel.style.display = "none";
+      }
     });
+  });
+  function wireDropdownTrigger(triggerId, panelId){
+    document.getElementById(triggerId).onclick = (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById(panelId);
+      const isOpen = panel.style.display === "block";
+      closeAllDropdownPanels();
+      panel.style.display = isOpen ? "none" : "block";
+    };
+  }
+
+  // ---------------- Year dropdown (multi-select) ----------------
+  function buildYearDropdown(){
+    const panel = document.getElementById("yearDropdownPanel");
+    const years = [...new Set(availableDates.map(d => getSprintInfo(d).year))].sort((a,b)=>a-b);
+    selectedYears = new Set([...selectedYears].filter(y => years.map(String).includes(y)));
+
+    panel.innerHTML = "";
+    if (!years.length){
+      panel.innerHTML = '<div style="padding:10px 8px; font-size:12.5px; color:var(--muted);">No published years yet.</div>';
+    } else {
+      const allRow = document.createElement("label");
+      allRow.className = "date-dropdown-row date-dropdown-all";
+      allRow.innerHTML = '<input type="checkbox" id="yearSelectAll" ' + (selectedYears.size===0 ? "checked" : "") + ' /><span>All years</span>';
+      panel.appendChild(allRow);
+      panel.appendChild(Object.assign(document.createElement("div"), { className: "date-dropdown-divider" }));
+      years.forEach(y => {
+        const row = document.createElement("label");
+        row.className = "date-dropdown-row";
+        row.innerHTML = '<input type="checkbox" data-year="' + y + '" ' + (selectedYears.has(String(y)) ? "checked" : "") + ' /><span>' + y + '</span>';
+        panel.appendChild(row);
+      });
+      panel.querySelector("#yearSelectAll").addEventListener("change", (e) => {
+        if (e.target.checked) selectedYears.clear();
+        onSnapshotFilterChanged();
+      });
+      panel.querySelectorAll("input[data-year]").forEach(cb => {
+        cb.addEventListener("change", (e) => {
+          const y = e.target.dataset.year;
+          if (e.target.checked) selectedYears.add(y); else selectedYears.delete(y);
+          onSnapshotFilterChanged();
+        });
+      });
+    }
+
+    document.getElementById("yearDropdownLabel").textContent =
+      selectedYears.size === 0 ? "All years" :
+      selectedYears.size === 1 ? [...selectedYears][0] :
+      selectedYears.size + " years selected";
+
+    wireDropdownTrigger("yearDropdownTrigger", "yearDropdownPanel");
+  }
+
+  // ---------------- Sprint dropdown (multi-select; options scoped to selected Year(s)) ----------------
+  function buildSprintDropdown(){
+    const panel = document.getElementById("sprintDropdownPanel");
+    const keyToLabel = new Map();
+    availableDates.forEach(d => {
+      const s = getSprintInfo(d);
+      if (selectedYears.size && !selectedYears.has(String(s.year))) return;
+      keyToLabel.set(s.key, selectedYears.size === 1 ? s.shortLabel : s.longLabel);
+    });
+    const keys = [...keyToLabel.keys()].sort();
+    selectedSprintKeys = new Set([...selectedSprintKeys].filter(k => keyToLabel.has(k)));
+
+    panel.innerHTML = "";
+    if (!keys.length){
+      panel.innerHTML = '<div style="padding:10px 8px; font-size:12.5px; color:var(--muted);">No published sprints in this selection yet.</div>';
+    } else {
+      const allRow = document.createElement("label");
+      allRow.className = "date-dropdown-row date-dropdown-all";
+      allRow.innerHTML = '<input type="checkbox" id="sprintSelectAll" ' + (selectedSprintKeys.size===0 ? "checked" : "") + ' /><span>All sprints</span>';
+      panel.appendChild(allRow);
+      panel.appendChild(Object.assign(document.createElement("div"), { className: "date-dropdown-divider" }));
+      keys.forEach(key => {
+        const row = document.createElement("label");
+        row.className = "date-dropdown-row";
+        row.innerHTML = '<input type="checkbox" data-sprint-key="' + key + '" ' + (selectedSprintKeys.has(key) ? "checked" : "") + ' /><span>' + escapeHtml(keyToLabel.get(key)) + '</span>';
+        panel.appendChild(row);
+      });
+      panel.querySelector("#sprintSelectAll").addEventListener("change", (e) => {
+        if (e.target.checked) selectedSprintKeys.clear();
+        onSnapshotFilterChanged();
+      });
+      panel.querySelectorAll("input[data-sprint-key]").forEach(cb => {
+        cb.addEventListener("change", (e) => {
+          const key = e.target.dataset.sprintKey;
+          if (e.target.checked) selectedSprintKeys.add(key); else selectedSprintKeys.delete(key);
+          onSnapshotFilterChanged();
+        });
+      });
+    }
+
+    document.getElementById("sprintDropdownLabel").textContent =
+      selectedSprintKeys.size === 0 ? "All sprints" :
+      selectedSprintKeys.size === 1 ? (keyToLabel.get([...selectedSprintKeys][0]) || [...selectedSprintKeys][0]) :
+      selectedSprintKeys.size + " sprints selected";
+
+    wireDropdownTrigger("sprintDropdownTrigger", "sprintDropdownPanel");
+  }
+
+  // ---------------- Date dropdown (multi-select; options scoped to selected Year(s)/Sprint(s)) ----------------
+  function buildDateChips(){
+    const panel = document.getElementById("dateDropdownPanel");
+    const visibleDates = availableDates.filter(dateInScope);
     const latestOverall = availableDates[availableDates.length - 1];
+
+    // drop picks that fell out of scope; if nothing's left, default to the latest visible date
+    selectedDates = new Set([...selectedDates].filter(d => visibleDates.includes(d)));
+    if (!selectedDates.size && visibleDates.length) selectedDates = new Set([visibleDates[visibleDates.length-1]]);
 
     panel.innerHTML = "";
 
@@ -1037,7 +1142,7 @@
 
     const allRow = document.createElement("label");
     allRow.className = "date-dropdown-row date-dropdown-all";
-    const scopeLabel = (selectedYear !== "all" || selectedSprint !== "all") ? " in selection" : "";
+    const scopeLabel = (selectedYears.size || selectedSprintKeys.size) ? " in selection" : "";
     allRow.innerHTML = '<input type="checkbox" id="dateSelectAll" /><span>Select all'+scopeLabel+'</span>';
     panel.appendChild(allRow);
     const divider = document.createElement("div");
@@ -1070,7 +1175,7 @@
         else e.target.checked = true; // block unchecking the last remaining date
         updateSelectAllState();
         updateDateDropdownLabel();
-        loadAndRenderSelectedDates();
+        loadAndRenderComparison();
         syncMainDashboardToSelection();
       });
     });
@@ -1085,18 +1190,14 @@
       panel.querySelectorAll("input[data-date]").forEach(cb => { cb.checked = selectedDates.has(cb.dataset.date); });
       updateSelectAllState();
       updateDateDropdownLabel();
-      loadAndRenderSelectedDates();
+      loadAndRenderComparison();
       syncMainDashboardToSelection();
     });
-
-    trigger.onclick = (e) => {
-      e.stopPropagation();
-      panel.style.display = panel.style.display === "block" ? "none" : "block";
-    };
 
     updateSelectAllState();
     updateDateDropdownLabel();
     document.getElementById("snapshotsSection").style.display = "block";
+    wireDropdownTrigger("dateDropdownTrigger", "dateDropdownPanel");
   }
 
   function updateDateDropdownLabel(){
@@ -1107,22 +1208,23 @@
       : sorted.length + " dates selected";
   }
 
-  // drives ONLY the historical trend chart/table — the main dashboard is kept
-  // in sync separately by syncMainDashboardToSelection() / applySprintModeAndRender()
-  function loadAndRenderSelectedDates(){
-    const dates = [...selectedDates].sort();
-    Promise.all(dates.map(loadAgg)).then(payloads => {
-      if (payloads.length > 1){
-        lastTrendDates = dates; lastTrendPayloads = payloads;
-        renderTrend(dates, payloads);
+  // drives ONLY the trend chart/table — the main dashboard is kept in sync
+  // separately by syncMainDashboardToSelection() / applySprintModeAndRender()
+  function loadAndRenderComparison(){
+    const rows = computeCompareRows();
+    if (rows.length > 1){
+      const dates = rows.map(r => r.date);
+      Promise.all(dates.map(loadAgg)).then(payloads => {
+        lastTrendRows = rows; lastTrendPayloads = payloads;
+        renderTrend(rows, payloads);
         document.getElementById("trendWrap").style.display = "block";
-      } else {
-        lastTrendDates = null; lastTrendPayloads = null;
-        document.getElementById("trendWrap").style.display = "none";
-      }
-    }).catch(() => {
-      showToast("Couldn't load one of the selected snapshot dates.");
-    });
+      }).catch(() => {
+        showToast("Couldn't load one of the selected snapshots for comparison.");
+      });
+    } else {
+      lastTrendRows = null; lastTrendPayloads = null;
+      document.getElementById("trendWrap").style.display = "none";
+    }
   }
 
   // country and program breakdowns are stored separately in each agg file, so
@@ -1152,13 +1254,16 @@
   }
 
   function refreshTrendIfVisible(){
-    if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
+    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads);
   }
 
-  function renderTrend(dates, payloads){
+  function renderTrend(rows, payloads){
+    const labels = rows.map(r => r.label);
     const filtered = payloads.map(filteredTrendTotals);
     const totalsList = filtered.map(f => f.totals);
     const anyLimited = filtered.some(f => f.limited);
+
+    document.getElementById("trendDateHeader").textContent = compareGranularityLabel();
 
     const noteEl = document.getElementById("trendFilterNote");
     if (filters.countries.size || filters.programs.size){
@@ -1166,7 +1271,7 @@
       if (filters.countries.size && filters.programs.size) msg = "Both Program and Country filters are active — this chart applies the Country filter only (can't combine both from published history).";
       else if (filters.countries.size) msg = "Filtered to: " + [...filters.countries].join(", ") + ".";
       else if (filters.programs.size) msg = "Filtered to: " + [...filters.programs].join(", ") + ".";
-      if (anyLimited) msg += " Some older dates were published before this filter data existed, so they show unfiltered totals.";
+      if (anyLimited) msg += " Some snapshots were published before this filter data existed, so they show unfiltered totals.";
       noteEl.textContent = msg;
       noteEl.style.display = "block";
     } else {
@@ -1178,7 +1283,7 @@
     trendChartRef = new Chart(document.getElementById("trendChart"), {
       type: "line",
       data: {
-        labels: dates,
+        labels: labels,
         datasets: [
           { label:"Enrolled", data: totalsList.map(t=>t.enrolled), borderColor: c.text, backgroundColor: c.text, tension:0.25 },
           { label:"Activated", data: totalsList.map(t=>t.activated), borderColor: c.activated, backgroundColor: c.activated, tension:0.25 },
@@ -1206,7 +1311,7 @@
       const convA = t.paid ? (t.activated/t.paid*100).toFixed(1) : "0.0";
       const tr = document.createElement("tr");
       tr.innerHTML =
-        "<td>"+escapeHtml(dates[i])+"</td>" +
+        "<td>"+escapeHtml(labels[i])+"</td>" +
         "<td>"+t.enrolled.toLocaleString()+"</td>" +
         "<td>"+t.activated.toLocaleString()+"</td>" +
         "<td>"+t.paid.toLocaleString()+"</td>" +
@@ -1236,9 +1341,7 @@
   // with at least one status change during the sprint are included. Each
   // returned row carries the CURRENT country/program/gender info (so the
   // existing country/program filter chips work unchanged) but DELTA booleans
-  // for enrolled/activated/paid/graduated/multi, so every downstream function
-  // that reads L.activated, L.paid, etc. automatically shows "new this sprint"
-  // instead of "cumulative as of this date".
+  // for enrolled/activated/paid/graduated/multi.
   function computeDeltaLearners(currentList, baselineMap){
     const rows = [];
     currentList.forEach(L => {
@@ -1263,9 +1366,10 @@
     return rows;
   }
 
-  // Decides whether the currently-selected sprint should put the whole
-  // dashboard into "sprint growth" mode, and if so, fetches the baseline
-  // snapshot and computes the diff. Always ends by (re)rendering everything.
+  // Decides whether the current Sprint selection should put the whole
+  // dashboard into "sprint growth" mode: only when EXACTLY ONE sprint is
+  // selected (2+ sprints means "compare them" via the trend section instead,
+  // handled by computeCompareRows/loadAndRenderComparison).
   function applySprintModeAndRender(publishedAt){
     finalizeLearnersData(); // rebuilds program/country/module filter option lists from cumulativeLearners
 
@@ -1276,15 +1380,18 @@
       document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
     }
 
-    if (selectedSprint === "all"){
+    if (selectedSprintKeys.size !== 1){
       sprintDeltaActive = false;
       deltaLearners = [];
       sprintBaselineDate = null;
+      activeSprintKey = null;
       finish();
       return;
     }
 
-    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
+    const key = [...selectedSprintKeys][0];
+    activeSprintKey = key;
+    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === key);
     const idx = sprintDates.length ? availableDates.indexOf(sprintDates[0]) : -1;
     const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
     sprintBaselineDate = baselineDate;
@@ -1323,9 +1430,7 @@
         availableDates = entries.map(e => e.date);
         datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
         selectedDates = new Set([availableDates[availableDates.length-1]]);
-        buildDateChips();
-        loadFullSnapshotForDate(availableDates[availableDates.length-1]);
-        loadAndRenderSelectedDates();
+        applySnapshotSelection();
       })
       .catch(() => tryLoadLegacySnapshot());
   }
@@ -1540,10 +1645,6 @@
       opt.value = c; opt.textContent = c;
       dirCountrySelect.appendChild(opt);
     });
-
-    // re-apply active state to chips that survive the rebuild (e.g. after switching sprints)
-    document.querySelectorAll("#programChips .chip").forEach(chip => chip.classList.toggle("active", filters.programs.has(chip.textContent)));
-    document.querySelectorAll("#countryChips .chip").forEach(chip => chip.classList.toggle("active", filters.countries.has(chip.textContent)));
   }
 
   // keeps the directory's single-select country dropdown in sync with the
@@ -1717,8 +1818,8 @@
   }
 
   // Public/summary mode: only aggregate counts are available (no per-learner
-  // rows), so filters and the learner directory are hidden — there's nothing
-  // for them to operate on. Sprint-growth mode never applies here.
+  // rows), so filters and the learner directory are hidden. Sprint-growth mode
+  // never applies here.
   function renderPublicSummary(payload){
     viewMode = "summary";
     publishedAgg = payload;
@@ -1743,10 +1844,10 @@
     };
   }
 
-  // Sprint-growth version: unlike computeTotals, "enrolled" here must be
-  // filtered too (rows.length would count everyone TOUCHED this sprint, not
-  // just those newly enrolled), so every figure is independently the count of
-  // learners who newly reached that particular status during the sprint.
+  // Sprint-growth version: "enrolled" must be filtered too (rows.length would
+  // count everyone TOUCHED this sprint, not just those newly enrolled), so
+  // every figure is independently the count of learners who newly reached
+  // that particular status during the sprint.
   function computeDeltaTotals(rows){
     return {
       enrolled: rows.filter(r=>r.enrolled).length,
@@ -1783,12 +1884,11 @@
   }
 
   // Small banner above the filters explaining what mode the whole dashboard is
-  // currently in — this replaces the old "just a text note" behavior; every
-  // chart/list below it now actually reflects the same scope this describes.
+  // currently in — every chart/list below it reflects the same scope this describes.
   function renderSprintModeBanner(){
     const el = document.getElementById("sprintGrowthNote");
     if (!sprintDeltaActive){
-      if (selectedSprint !== "all" && !sprintBaselineDate){
+      if (selectedSprintKeys.size === 1 && !sprintBaselineDate){
         el.textContent = "Earliest published sprint on record — no prior snapshot to diff against, so the dashboard below is showing cumulative totals instead of sprint-only growth.";
         el.style.display = "block";
       } else {
@@ -1796,11 +1896,11 @@
       }
       return;
     }
-    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === selectedSprint);
-    const sprintLabel = sprintDates.length ? getSprintInfo(sprintDates[sprintDates.length-1]).longLabel : selectedSprint;
+    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === activeSprintKey);
+    const sprintLabel = sprintDates.length ? getSprintInfo(sprintDates[sprintDates.length-1]).longLabel : activeSprintKey;
     el.innerHTML =
       "<strong>Showing sprint growth for " + escapeHtml(sprintLabel) + "</strong> — every stat card, chart, the leaderboard, and the directory below reflect only what changed since the last snapshot before it (" +
-      escapeHtml(sprintBaselineDate) + "). Program/Country/Module filters still apply on top of this. Switch back to \"All sprints\" for cumulative totals.";
+      escapeHtml(sprintBaselineDate) + "). Program/Country/Module filters still apply on top of this. Select 2+ sprints instead to compare them side-by-side in the trend section above.";
     el.style.display = "block";
   }
 
@@ -1885,8 +1985,7 @@
 
   // `deltaMode` controls what "enrolled" means per country: the raw row count
   // (cumulative) or only rows newly enrolled this sprint (delta). Activated/paid
-  // always come from whatever boolean the row already carries, which is itself
-  // cumulative or delta depending on which learner array was passed in.
+  // always come from whatever boolean the row already carries.
   function computeCountryAgg(rows, deltaMode){
     const agg = new Map();
     rows.forEach(L => {
