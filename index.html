@@ -425,6 +425,7 @@
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
+          <div class="sub" id="trendFootnote" style="display:none; margin-top:8px;"></div>
         </div>
       </div>
     </section>
@@ -641,8 +642,9 @@
   let selectedYears = new Set();    // empty = "All years"; values are strings, e.g. "2026"
   let selectedSprintKeys = new Set(); // empty = "All sprints"; values are keys, e.g. "2026-S2"
   const snapshotsCache = new Map(); // date -> agg payload, avoids re-fetching
-  let lastTrendRows = null;         // [{label, date}, ...] for redrawing the trend chart on theme change
+  let lastTrendRows = null;         // [{label, date, baselineDate, periodMode}, ...] for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
+  let lastTrendBaselineMap = null;  // Map<baselineDate, aggPayload>, only populated in sprint/year (period) comparison mode
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
   let viewMode = "empty";     // "empty" | "full" (admin's live CSV / published snapshot) | "summary" (legacy aggregate-only)
   let publishedAgg = null;    // holds the aggregate payload when viewMode === "summary"
@@ -700,7 +702,7 @@
       renderGenderChart(new Map(Object.entries(publishedAgg.gender)), false);
       renderBarChart(new Map(Object.entries(publishedAgg.byCountry)));
     }
-    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads);
+    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads, lastTrendBaselineMap);
   }
   themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 
@@ -953,7 +955,9 @@
         const datesForKey = availableDates.filter(d => getSprintInfo(d).key === key);
         if (!datesForKey.length) return null;
         const repDate = datesForKey[datesForKey.length - 1];
-        return { label: getSprintInfo(repDate).longLabel, date: repDate };
+        const idx = availableDates.indexOf(datesForKey[0]);
+        const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+        return { label: getSprintInfo(repDate).longLabel, date: repDate, baselineDate, periodMode: true };
       }).filter(Boolean);
     }
     if (selectedYears.size >= 2){
@@ -966,11 +970,13 @@
         });
         if (!datesForYear.length) return null;
         const repDate = datesForYear[datesForYear.length - 1];
-        return { label: String(year), date: repDate };
+        const idx = availableDates.indexOf(datesForYear[0]);
+        const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
+        return { label: String(year), date: repDate, baselineDate, periodMode: true };
       }).filter(Boolean);
     }
     if (selectedDates.size >= 2){
-      return [...selectedDates].sort().map(d => ({ label: d, date: d }));
+      return [...selectedDates].sort().map(d => ({ label: d, date: d, baselineDate: null, periodMode: false }));
     }
     return [];
   }
@@ -1213,16 +1219,21 @@
   function loadAndRenderComparison(){
     const rows = computeCompareRows();
     if (rows.length > 1){
-      const dates = rows.map(r => r.date);
-      Promise.all(dates.map(loadAgg)).then(payloads => {
-        lastTrendRows = rows; lastTrendPayloads = payloads;
-        renderTrend(rows, payloads);
+      const mainDates = rows.map(r => r.date);
+      const baselineDates = [...new Set(rows.map(r => r.baselineDate).filter(Boolean))];
+      Promise.all([
+        Promise.all(mainDates.map(loadAgg)),
+        Promise.all(baselineDates.map(loadAgg))
+      ]).then(([payloads, baselinePayloads]) => {
+        const baselineMap = new Map(baselineDates.map((d, i) => [d, baselinePayloads[i]]));
+        lastTrendRows = rows; lastTrendPayloads = payloads; lastTrendBaselineMap = baselineMap;
+        renderTrend(rows, payloads, baselineMap);
         document.getElementById("trendWrap").style.display = "block";
       }).catch(() => {
         showToast("Couldn't load one of the selected snapshots for comparison.");
       });
     } else {
-      lastTrendRows = null; lastTrendPayloads = null;
+      lastTrendRows = null; lastTrendPayloads = null; lastTrendBaselineMap = null;
       document.getElementById("trendWrap").style.display = "none";
     }
   }
@@ -1254,28 +1265,58 @@
   }
 
   function refreshTrendIfVisible(){
-    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads);
+    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads, lastTrendBaselineMap);
   }
 
-  function renderTrend(rows, payloads){
-    const labels = rows.map(r => r.label);
+  function renderTrend(rows, payloads, baselineMap){
+    const isPeriodMode = rows.some(r => r.periodMode);
+    const anyFallback = rows.some(r => r.periodMode && !r.baselineDate);
+    // rows with no baseline (earliest sprint/year on record) can't show
+    // period-only growth, so they fall back to a cumulative total — flagged
+    // with an asterisk and explained in the footnote below the table
+    const labels = rows.map(r => (r.periodMode && !r.baselineDate) ? r.label + " *" : r.label);
+
     const filtered = payloads.map(filteredTrendTotals);
-    const totalsList = filtered.map(f => f.totals);
     const anyLimited = filtered.some(f => f.limited);
+
+    const totalsList = rows.map((r, i) => {
+      const endTotals = filtered[i].totals;
+      if (!r.periodMode || !r.baselineDate) return endTotals; // date rows, or a period with no prior snapshot
+      const baselinePayload = baselineMap ? baselineMap.get(r.baselineDate) : null;
+      const baselineTotals = baselinePayload ? filteredTrendTotals(baselinePayload).totals : { enrolled:0, activated:0, paid:0 };
+      return {
+        enrolled: endTotals.enrolled - baselineTotals.enrolled,
+        activated: endTotals.activated - baselineTotals.activated,
+        paid: endTotals.paid - baselineTotals.paid
+      };
+    });
 
     document.getElementById("trendDateHeader").textContent = compareGranularityLabel();
 
     const noteEl = document.getElementById("trendFilterNote");
+    const noteParts = [];
+    if (isPeriodMode){
+      noteParts.push("Enrolled/Activated/Paid below show growth DURING each " + compareGranularityLabel().toLowerCase() + " only (vs. the last snapshot right before it began) — not cumulative totals.");
+    }
     if (filters.countries.size || filters.programs.size){
-      let msg = "Reflecting your Program/Country filters where possible.";
-      if (filters.countries.size && filters.programs.size) msg = "Both Program and Country filters are active — this chart applies the Country filter only (can't combine both from published history).";
-      else if (filters.countries.size) msg = "Filtered to: " + [...filters.countries].join(", ") + ".";
-      else if (filters.programs.size) msg = "Filtered to: " + [...filters.programs].join(", ") + ".";
-      if (anyLimited) msg += " Some snapshots were published before this filter data existed, so they show unfiltered totals.";
-      noteEl.textContent = msg;
+      if (filters.countries.size && filters.programs.size) noteParts.push("Both Program and Country filters are active — this reflects the Country filter only (can't combine both from published history).");
+      else if (filters.countries.size) noteParts.push("Filtered to: " + [...filters.countries].join(", ") + ".");
+      else if (filters.programs.size) noteParts.push("Filtered to: " + [...filters.programs].join(", ") + ".");
+      if (anyLimited) noteParts.push("Some snapshots were published before this filter data existed, so they show unfiltered totals.");
+    }
+    if (noteParts.length){
+      noteEl.textContent = noteParts.join(" ");
       noteEl.style.display = "block";
     } else {
       noteEl.style.display = "none";
+    }
+
+    const footnoteEl = document.getElementById("trendFootnote");
+    if (anyFallback){
+      footnoteEl.textContent = "* No snapshot exists before this " + compareGranularityLabel().toLowerCase() + " — showing its cumulative total instead of period-only growth.";
+      footnoteEl.style.display = "block";
+    } else {
+      footnoteEl.style.display = "none";
     }
 
     const c = chartColors();
