@@ -1909,23 +1909,34 @@
     document.getElementById("statMulti").textContent = multi.toLocaleString();
 
     if (deltaMode){
-      // Same "how does the filtered slice compare to the whole" context the
-      // cumulative view already gave you — just measured against the FULL
-      // sprint's growth (all countries/programs) instead of all-time totals.
+      // Two separate comparisons, matching what cumulative mode already gives:
+      // (1) within-scope ratios — how Activated relates to Enrolled/Paid, how
+      //     Graduated relates to Enrolled/Activated/Paid — always shown, using
+      //     whatever's currently filtered, exactly like cumulative mode does.
+      // (2) "share of the whole sprint" — how the filtered slice compares to
+      //     the FULL sprint's growth across every country/program — shown only
+      //     when a filter is actually narrowing things down.
       const fullDeltaTotals = computeDeltaTotals(deltaLearners);
       const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
+
       document.getElementById("statEnrolledPct").textContent = anyFilterActive
         ? pct(enrolled, fullDeltaTotals.enrolled) + "% of total newly enrolled this sprint (" + fullDeltaTotals.enrolled.toLocaleString() + ")"
         : "newly enrolled this sprint";
+
+      const activatedWithinScope = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
       document.getElementById("statActivatedPct").textContent = anyFilterActive
-        ? pct(activated, fullDeltaTotals.activated) + "% of total newly activated this sprint (" + fullDeltaTotals.activated.toLocaleString() + ")"
-        : "newly activated this sprint";
+        ? activatedWithinScope + " · " + pct(activated, fullDeltaTotals.activated) + "% of total newly activated this sprint (" + fullDeltaTotals.activated.toLocaleString() + ")"
+        : activatedWithinScope;
+
+      const paidWithinScope = pct(paid,enrolled) + "% of enrolled";
       document.getElementById("statPaidPct").textContent = anyFilterActive
-        ? pct(paid, fullDeltaTotals.paid) + "% of total newly paid this sprint (" + fullDeltaTotals.paid.toLocaleString() + ")"
-        : "newly paid this sprint";
+        ? paidWithinScope + " · " + pct(paid, fullDeltaTotals.paid) + "% of total newly paid this sprint (" + fullDeltaTotals.paid.toLocaleString() + ")"
+        : paidWithinScope;
+
+      const graduatedWithinScope = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
       document.getElementById("statGraduatedPct").textContent = anyFilterActive
-        ? pct(graduated||0, fullDeltaTotals.graduated) + "% of total newly graduated this sprint (" + fullDeltaTotals.graduated.toLocaleString() + ")"
-        : "newly graduated this sprint";
+        ? graduatedWithinScope + " · " + pct(graduated||0, fullDeltaTotals.graduated) + "% of total newly graduated this sprint (" + fullDeltaTotals.graduated.toLocaleString() + ")"
+        : graduatedWithinScope;
     } else {
       const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
       document.getElementById("statEnrolledPct").textContent = anyFilterActive
