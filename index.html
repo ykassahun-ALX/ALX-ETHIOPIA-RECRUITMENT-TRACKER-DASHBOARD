@@ -935,12 +935,21 @@
     return true;
   }
 
-  // Which published date the main dashboard should anchor to: the most recent
-  // date implied by the current Year/Sprint scope, falling back to the latest
-  // individually-picked date, falling back to the latest date overall.
+  // Which published date the main dashboard should anchor to.
+  //
+  // FIX: Year/Sprint scoping should only take priority over an explicit date
+  // pick when the person has actually selected a Year and/or Sprint. Before
+  // this fix, dateInScope() returned true for every date whenever Year AND
+  // Sprint were both "All" (empty sets = no restriction), so `scoped` ended up
+  // containing every published date, and the function always fell through to
+  // "the latest date overall" — silently ignoring whatever the person picked
+  // in the Date dropdown. That's why choosing an older date visually did
+  // nothing: the dashboard kept re-anchoring to the newest snapshot.
   function computeAnchorDate(){
-    const scoped = availableDates.filter(dateInScope);
-    if (scoped.length) return scoped[scoped.length - 1];
+    if (selectedYears.size || selectedSprintKeys.size){
+      const scoped = availableDates.filter(dateInScope);
+      if (scoped.length) return scoped[scoped.length - 1];
+    }
     if (selectedDates.size) return [...selectedDates].sort().pop();
     return availableDates.length ? availableDates[availableDates.length - 1] : null;
   }
