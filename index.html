@@ -121,7 +121,6 @@
   .section-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap;}
   .section-head h2{ font-size:16px; }
   .section-head .sub{ color: var(--muted); font-size:12.5px; }
-  .mode-note{ color: var(--activated); font-size:12px; font-weight:600; }
 
   /* ---------- Upload ---------- */
   #uploadCard{ margin-top: -28px; position:relative; z-index:2; }
@@ -213,10 +212,6 @@
     padding:0; line-height:1;
   }
   .stat-export-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
-  #sprintGrowthNote{
-    margin-top:14px; padding:10px 14px; border-radius:8px; background: var(--activated-soft);
-    color: var(--ink); font-size:12.5px; border:1px solid var(--border); line-height:1.5;
-  }
 
   /* ---------- Charts row ---------- */
   .charts-row{ display:grid; grid-template-columns: 1fr 1.6fr; gap:18px; }
@@ -296,7 +291,6 @@
   .badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; margin:1px 3px 1px 0; }
   .badge.prog{ background: var(--surface-alt); color: var(--accent-dark); }
   .badge.multi{ background: var(--warn-soft); color: var(--warn); }
-  .badge.new{ background: var(--activated-soft); color: var(--activated); }
   .module-line{ font-size:11.5px; color:var(--muted); display:block; }
   .yes{ color: var(--accent-dark); font-weight:700; }
   .no{ color: var(--muted); }
@@ -389,23 +383,15 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Select 2+ Sprints, or 2+ Years, to compare them directly below — same Δ table as picking 2+ specific dates. Selecting exactly one Sprint also scopes the whole dashboard above to that sprint's growth.</span>
+        <span class="sub">Pick 2 or more dates to compare day-over-day change. The main dashboard above always shows the latest date — this section is just for historical comparison.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-        <div class="date-dropdown" id="yearDropdown">
-          <button type="button" id="yearDropdownTrigger" class="date-dropdown-trigger" style="min-width:140px">
-            <span id="yearDropdownLabel">All years</span>
-            <span class="date-dropdown-caret">▾</span>
-          </button>
-          <div class="date-dropdown-panel" id="yearDropdownPanel" style="display:none"></div>
-        </div>
-        <div class="date-dropdown" id="sprintDropdown">
-          <button type="button" id="sprintDropdownTrigger" class="date-dropdown-trigger" style="min-width:220px">
-            <span id="sprintDropdownLabel">All sprints</span>
-            <span class="date-dropdown-caret">▾</span>
-          </button>
-          <div class="date-dropdown-panel" id="sprintDropdownPanel" style="display:none"></div>
-        </div>
+        <select id="yearFilter" style="max-width:120px">
+          <option value="all">All years</option>
+        </select>
+        <select id="sprintFilter" style="max-width:220px">
+          <option value="all">All sprints</option>
+        </select>
         <div class="date-dropdown" id="dateDropdown">
           <button type="button" id="dateDropdownTrigger" class="date-dropdown-trigger">
             <span id="dateDropdownLabel">Select dates…</span>
@@ -414,18 +400,16 @@
           <div class="date-dropdown-panel" id="dateDropdownPanel" style="display:none"></div>
         </div>
       </div>
-      <div id="sprintGrowthNote" style="display:none"></div>
       <div id="trendWrap" style="display:none; margin-top:16px;">
         <div id="trendFilterNote" class="sub" style="display:none; margin-bottom:10px;"></div>
         <div class="chart-box chart-box-md"><canvas id="trendChart"></canvas></div>
         <div style="overflow-x:auto; margin-top:14px;">
           <table id="trendTable">
             <thead>
-              <tr><th id="trendDateHeader">Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
+              <tr><th>Date</th><th>Enrolled</th><th>Activated</th><th>Paid</th><th>Paid ÷ Enrolled</th><th>Activated ÷ Paid</th><th>Δ Enrolled</th><th>Δ Paid</th></tr>
             </thead>
             <tbody id="trendTableBody"></tbody>
           </table>
-          <div class="sub" id="trendFootnote" style="display:none; margin-top:8px;"></div>
         </div>
       </div>
     </section>
@@ -495,7 +479,6 @@
     <section class="card">
       <div class="section-head">
         <h2>Enrolled vs. Activated vs. Paid, by country</h2>
-        <span class="sub mode-note" id="barChartModeNote" style="display:none"></span>
       </div>
       <div class="chart-box chart-box-md"><canvas id="barChart"></canvas></div>
       <div class="legend-note">
@@ -508,7 +491,6 @@
     <section class="card">
       <div class="section-head">
         <h2>Country leaderboard</h2>
-        <span class="sub mode-note" id="scoreboardModeNote" style="display:none"></span>
         <div class="sort-select">
           Rank by
           <select id="rankMetric">
@@ -524,16 +506,13 @@
 
     <section>
       <div class="card gender-card">
-        <div class="section-head">
-          <h2>Gender split</h2>
-          <span class="sub mode-note" id="genderModeNote" style="display:none"></span>
-        </div>
+        <div class="section-head"><h2>Gender split</h2></div>
         <div class="gender-flex">
           <div class="chart-box chart-box-donut">
             <canvas id="genderChart"></canvas>
             <div class="donut-center">
               <div class="donut-center-value num" id="genderCenterValue">0</div>
-              <div class="donut-center-label" id="donutCenterLabel">Learners</div>
+              <div class="donut-center-label">Learners</div>
             </div>
           </div>
           <div id="genderLegend" class="gender-legend"></div>
@@ -546,7 +525,6 @@
         <h2>Learner directory</h2>
         <span class="sub" id="directoryCount">0 learners</span>
       </div>
-      <div class="sub mode-note" id="directoryModeNote" style="display:none; margin-bottom:10px;"></div>
       <div class="table-toolbar">
         <input type="text" id="searchBox" placeholder="Search email or name…" />
         <select id="directoryCountryFilter" style="max-width:220px"><option value="all">All countries</option></select>
@@ -558,7 +536,7 @@
             <tr>
               <th>Email</th><th>Name</th><th>Gender</th><th>Country</th>
               <th># Programs</th><th>Progress</th><th>Health status</th>
-              <th id="thActivated">Activated</th><th id="thPaid">Paid</th>
+              <th>Activated</th><th>Paid</th>
             </tr>
           </thead>
           <tbody id="tableBody"></tbody>
@@ -609,22 +587,7 @@
   "use strict";
 
   // ---------------- State ----------------
-  // `cumulativeLearners` is always the full, as-of-date learner list for
-  // whatever date the main dashboard is currently anchored to (currentFullSnapshotDate).
-  // `deltaLearners` is derived from it (only populated when exactly one sprint
-  // is selected) and holds one row per learner who had ANY status change during
-  // that sprint, with boolean fields carrying the DELTA meaning instead of the
-  // cumulative one.
-  // `learners` is whichever of the two is currently "live" and feeds every
-  // downstream render function (stats, charts, scoreboard, directory).
-  let cumulativeLearners = [];
-  let deltaLearners = [];
-  let learners = [];
-  let sprintDeltaActive = false;   // true only when exactly one sprint is selected AND a baseline snapshot exists
-  let sprintBaselineDate = null;   // the last published date before the active sprint began
-  let activeSprintKey = null;      // the single sprint key sprint-growth mode is currently scoped to
-  const fullLearnersCache = new Map(); // date -> {learners, publishedAt}, avoids re-fetching the same day twice
-
+  let learners = [];          // full array of learner objects
   let allPrograms = [];        // sorted list of program names
   let allCountries = [];       // sorted list of country names (by enrollment)
   let allCourses = [];         // sorted list of "Program — Course" strings
@@ -636,17 +599,13 @@
   let genderChartRef = null;
   let barChartRef = null;
   let trendChartRef = null;
-
   let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
-  let selectedDates = new Set();    // individual dates picked for date-level comparison / as scope fallback
-  let selectedYears = new Set();    // empty = "All years"; values are strings, e.g. "2026"
-  let selectedSprintKeys = new Set(); // empty = "All sprints"; values are keys, e.g. "2026-S2"
-  const snapshotsCache = new Map(); // date -> agg payload, avoids re-fetching
-  let lastTrendRows = null;         // [{label, date, baselineDate, periodMode}, ...] for redrawing the trend chart on theme change
+  let selectedDates = new Set();    // dates currently chosen for comparison
+  const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
+  let lastTrendDates = null;        // for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
-  let lastTrendBaselineMap = null;  // Map<baselineDate, aggPayload>, only populated in sprint/year (period) comparison mode
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
-  let viewMode = "empty";     // "empty" | "full" (admin's live CSV / published snapshot) | "summary" (legacy aggregate-only)
+  let viewMode = "empty";     // "empty" | "full" (admin's live CSV) | "summary" (published aggregate)
   let publishedAgg = null;    // holds the aggregate payload when viewMode === "summary"
   let isAdmin = false;
   // NOTE FOR WHOEVER DEPLOYS THIS: this is a soft, cosmetic gate only — anyone can
@@ -656,9 +615,6 @@
   const ADMIN_PASSWORD = "alx-admin-2026";
   let lastUpdated = null;       // Date object
   let lastUpdatedSource = null; // "published" | "local"
-
-  // which published date the main dashboard is currently anchored to.
-  let currentFullSnapshotDate = null;
 
   // ---------------- DOM refs ----------------
   const dropzone = document.getElementById("dropzone");
@@ -696,13 +652,13 @@
     // charts bake colors into their config at creation time, so redraw them on theme change
     if (viewMode === "full"){
       const filtered = getFiltered();
-      renderGenderChart(computeGenderCounts(filtered, sprintDeltaActive), sprintDeltaActive);
-      renderBarChart(computeCountryAgg(filtered, sprintDeltaActive));
+      renderGenderChart(computeGenderCounts(filtered));
+      renderBarChart(computeCountryAgg(filtered));
     } else if (viewMode === "summary" && publishedAgg){
-      renderGenderChart(new Map(Object.entries(publishedAgg.gender)), false);
+      renderGenderChart(new Map(Object.entries(publishedAgg.gender)));
       renderBarChart(new Map(Object.entries(publishedAgg.byCountry)));
     }
-    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads, lastTrendBaselineMap);
+    if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
   }
   themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 
@@ -757,7 +713,7 @@
 
   // ---------------- Admin gate ----------------
   function updateEmptyState(){
-    const hasData = cumulativeLearners.length > 0 || viewMode === "summary";
+    const hasData = learners.length > 0 || viewMode === "summary";
     emptyStateAdmin.style.display = (!hasData && isAdmin) ? "block" : "none";
     emptyStatePublic.style.display = (!hasData && !isAdmin) ? "block" : "none";
   }
@@ -794,7 +750,7 @@
   // that limit. A small snapshots-index.json records, per date, how many parts
   // exist, so the page knows how many files to fetch and stitch back together.
   // A separate, tiny agg-YYYY-MM-DD.json (totals/gender/country only) is also
-  // published per day — that one is what powers the lightweight trend
+  // published per day — that one is what powers the lightweight multi-day trend
   // comparison, without needing to download every historical day's full data.
   const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
   let datePartsMap = new Map(); // date -> number of parts published for that date
@@ -834,7 +790,7 @@
   }
 
   document.getElementById("publishBtn").addEventListener("click", () => {
-    if (!cumulativeLearners.length){
+    if (!learners.length){
       showToast("Load a CSV first, then publish the snapshot.");
       return;
     }
@@ -842,26 +798,26 @@
     const dateStr = todayDateString();
 
     // chunk the full learner array so no single file exceeds GitHub's upload limit
-    const fullSize = JSON.stringify(cumulativeLearners).length;
+    const fullSize = JSON.stringify(learners).length;
     const numParts = Math.max(1, Math.ceil(fullSize / CHUNK_TARGET_BYTES));
-    const chunkLen = Math.ceil(cumulativeLearners.length / numParts);
+    const chunkLen = Math.ceil(learners.length / numParts);
     const files = [];
     for (let p = 0; p < numParts; p++){
-      const slice = cumulativeLearners.slice(p*chunkLen, (p+1)*chunkLen);
+      const slice = learners.slice(p*chunkLen, (p+1)*chunkLen);
       files.push({
         filename: "data-" + dateStr + "-part" + (p+1) + ".json",
         obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
       });
     }
-    // small aggregate file, used only for the trend comparison
+    // small aggregate file, used only for the historical trend chart
     files.push({
       filename: "agg-" + dateStr + ".json",
       obj: {
         date: dateStr, publishedAt: publishedAt.toISOString(),
-        totals: computeTotals(cumulativeLearners),
-        gender: Object.fromEntries(computeGenderCounts(cumulativeLearners, false)),
-        byCountry: Object.fromEntries(computeCountryAgg(cumulativeLearners, false)),
-        byProgram: Object.fromEntries(computeProgramAgg(cumulativeLearners))
+        totals: computeTotals(learners),
+        gender: Object.fromEntries(computeGenderCounts(learners)),
+        byCountry: Object.fromEntries(computeCountryAgg(learners)),
+        byProgram: Object.fromEntries(computeProgramAgg(learners))
       }
     });
 
@@ -886,7 +842,7 @@
       });
   });
 
-  // ---- lightweight aggregate loader (for the trend comparison only) ----
+  // ---- lightweight aggregate loader (for the historical trend chart only) ----
   function loadAgg(date){
     if (snapshotsCache.has(date)) return Promise.resolve(snapshotsCache.get(date));
     return fetch(noCacheUrl("agg-" + date + ".json"), { cache: "no-store" })
@@ -894,258 +850,98 @@
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
   }
 
-  // ---- full per-learner loader (for the main dashboard AND sprint-growth diffing) ----
-  function fetchFullLearnersForDate(date){
-    if (fullLearnersCache.has(date)) return Promise.resolve(fullLearnersCache.get(date));
-    const parts = datePartsMap.get(date) || 1;
-    const fetches = [];
-    for (let p = 1; p <= parts; p++){
-      fetches.push(
-        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
-          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
-      );
-    }
-    return Promise.all(fetches).then(chunks => {
-      let merged = [];
-      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
-      const payload = { learners: merged, publishedAt: chunks[0] && chunks[0].publishedAt };
-      fullLearnersCache.set(date, payload);
-      return payload;
-    });
-  }
-
   // ---------------- Sprints (ALX calendar: Jan-Apr, May-Aug, Sep-Dec) ----------------
+  let selectedYear = "all";
+  let selectedSprint = "all";
   function getSprintInfo(dateStr){
     const [year, month] = dateStr.split("-").map(Number);
     let sprintNum, range;
     if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
     else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
     else { sprintNum = 3; range = "Sep–Dec"; }
+    // key always includes the year so sprints from different years never merge.
+    // The label drops the year when a specific year is already chosen via the
+    // year filter (redundant otherwise); it's added back only under "All years",
+    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
     const shortLabel = "Sprint " + sprintNum + ": " + range;
     const longLabel = year + " · " + shortLabel;
     return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
   }
-
-  // true if a published date falls within the current Year/Sprint selection.
-  // Empty sets mean "no restriction" for that dimension.
-  function dateInScope(d){
-    const s = getSprintInfo(d);
-    if (selectedYears.size && !selectedYears.has(String(s.year))) return false;
-    if (selectedSprintKeys.size && !selectedSprintKeys.has(s.key)) return false;
-    return true;
-  }
-
-  // Which published date the main dashboard should anchor to.
-  //
-  // FIX: Year/Sprint scoping should only take priority over an explicit date
-  // pick when the person has actually selected a Year and/or Sprint. Before
-  // this fix, dateInScope() returned true for every date whenever Year AND
-  // Sprint were both "All" (empty sets = no restriction), so `scoped` ended up
-  // containing every published date, and the function always fell through to
-  // "the latest date overall" — silently ignoring whatever the person picked
-  // in the Date dropdown. That's why choosing an older date visually did
-  // nothing: the dashboard kept re-anchoring to the newest snapshot.
-  function computeAnchorDate(){
-    if (selectedYears.size || selectedSprintKeys.size){
-      const scoped = availableDates.filter(dateInScope);
-      if (scoped.length) return scoped[scoped.length - 1];
-    }
-    if (selectedDates.size) return [...selectedDates].sort().pop();
-    return availableDates.length ? availableDates[availableDates.length - 1] : null;
-  }
-
-  // Decides what the trend comparison compares: 2+ selected sprints beat 2+
-  // selected years, which beat 2+ individually-picked dates. Each returned row
-  // is {label, date} — `date` is the representative (most recent) published
-  // date for that sprint/year/pick, `label` is what shows on the chart/table.
-  function computeCompareRows(){
-    if (selectedSprintKeys.size >= 2){
-      return [...selectedSprintKeys].sort().map(key => {
-        const datesForKey = availableDates.filter(d => getSprintInfo(d).key === key);
-        if (!datesForKey.length) return null;
-        const repDate = datesForKey[datesForKey.length - 1];
-        const idx = availableDates.indexOf(datesForKey[0]);
-        const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
-        return { label: getSprintInfo(repDate).longLabel, date: repDate, baselineDate, periodMode: true };
-      }).filter(Boolean);
-    }
-    if (selectedYears.size >= 2){
-      return [...selectedYears].map(Number).sort((a,b)=>a-b).map(year => {
-        const datesForYear = availableDates.filter(d => {
-          const s = getSprintInfo(d);
-          if (String(s.year) !== String(year)) return false;
-          if (selectedSprintKeys.size && !selectedSprintKeys.has(s.key)) return false;
-          return true;
-        });
-        if (!datesForYear.length) return null;
-        const repDate = datesForYear[datesForYear.length - 1];
-        const idx = availableDates.indexOf(datesForYear[0]);
-        const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
-        return { label: String(year), date: repDate, baselineDate, periodMode: true };
-      }).filter(Boolean);
-    }
-    if (selectedDates.size >= 2){
-      return [...selectedDates].sort().map(d => ({ label: d, date: d, baselineDate: null, periodMode: false }));
-    }
-    return [];
-  }
-
-  function compareGranularityLabel(){
-    if (selectedSprintKeys.size >= 2) return "Sprint";
-    if (selectedYears.size >= 2) return "Year";
-    return "Date";
-  }
-
-  // Centralizes what happens whenever Year/Sprint/Date selection changes:
-  // rebuild all three dropdowns (each may prune the others' now-invalid picks),
-  // recompute the trend comparison, and resync the main dashboard.
-  function applySnapshotSelection(){
-    buildYearDropdown();
-    buildSprintDropdown();
-    buildDateChips();
-    loadAndRenderComparison();
-    syncMainDashboardToSelection();
-  }
-
-  function syncMainDashboardToSelection(){
-    const target = computeAnchorDate();
-    if (!target) return;
-    if (target === currentFullSnapshotDate){
-      applySprintModeAndRender(); // date unchanged, but the sprint scope may have
-    } else {
-      loadFullSnapshotForDate(target);
-    }
-  }
-
-  function onSnapshotFilterChanged(){
-    applySnapshotSelection();
-  }
-
-  // ---------------- Dropdown open/close plumbing (shared by all three pickers) ----------------
-  function closeAllDropdownPanels(){
-    ["yearDropdownPanel","sprintDropdownPanel","dateDropdownPanel"].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = "none";
+  function buildYearOptions(){
+    const sel = document.getElementById("yearFilter");
+    const years = new Set();
+    availableDates.forEach(d => years.add(getSprintInfo(d).year));
+    const sortedYears = [...years].sort();
+    const prevValue = sel.value;
+    sel.innerHTML = '<option value="all">All years</option>';
+    sortedYears.forEach(y => {
+      const opt = document.createElement("option");
+      opt.value = y; opt.textContent = y;
+      sel.appendChild(opt);
     });
+    if (sortedYears.map(String).includes(prevValue)) sel.value = prevValue;
   }
-  document.addEventListener("click", (e) => {
-    ["yearDropdown","sprintDropdown","dateDropdown"].forEach(containerId => {
-      const container = document.getElementById(containerId);
-      if (container && !container.contains(e.target)){
-        const panel = container.querySelector(".date-dropdown-panel");
-        if (panel) panel.style.display = "none";
-      }
-    });
-  });
-  function wireDropdownTrigger(triggerId, panelId){
-    document.getElementById(triggerId).onclick = (e) => {
-      e.stopPropagation();
-      const panel = document.getElementById(panelId);
-      const isOpen = panel.style.display === "block";
-      closeAllDropdownPanels();
-      panel.style.display = isOpen ? "none" : "block";
-    };
-  }
-
-  // ---------------- Year dropdown (multi-select) ----------------
-  function buildYearDropdown(){
-    const panel = document.getElementById("yearDropdownPanel");
-    const years = [...new Set(availableDates.map(d => getSprintInfo(d).year))].sort((a,b)=>a-b);
-    selectedYears = new Set([...selectedYears].filter(y => years.map(String).includes(y)));
-
-    panel.innerHTML = "";
-    if (!years.length){
-      panel.innerHTML = '<div style="padding:10px 8px; font-size:12.5px; color:var(--muted);">No published years yet.</div>';
-    } else {
-      const allRow = document.createElement("label");
-      allRow.className = "date-dropdown-row date-dropdown-all";
-      allRow.innerHTML = '<input type="checkbox" id="yearSelectAll" ' + (selectedYears.size===0 ? "checked" : "") + ' /><span>All years</span>';
-      panel.appendChild(allRow);
-      panel.appendChild(Object.assign(document.createElement("div"), { className: "date-dropdown-divider" }));
-      years.forEach(y => {
-        const row = document.createElement("label");
-        row.className = "date-dropdown-row";
-        row.innerHTML = '<input type="checkbox" data-year="' + y + '" ' + (selectedYears.has(String(y)) ? "checked" : "") + ' /><span>' + y + '</span>';
-        panel.appendChild(row);
-      });
-      panel.querySelector("#yearSelectAll").addEventListener("change", (e) => {
-        if (e.target.checked) selectedYears.clear();
-        onSnapshotFilterChanged();
-      });
-      panel.querySelectorAll("input[data-year]").forEach(cb => {
-        cb.addEventListener("change", (e) => {
-          const y = e.target.dataset.year;
-          if (e.target.checked) selectedYears.add(y); else selectedYears.delete(y);
-          onSnapshotFilterChanged();
-        });
-      });
-    }
-
-    document.getElementById("yearDropdownLabel").textContent =
-      selectedYears.size === 0 ? "All years" :
-      selectedYears.size === 1 ? [...selectedYears][0] :
-      selectedYears.size + " years selected";
-
-    wireDropdownTrigger("yearDropdownTrigger", "yearDropdownPanel");
-  }
-
-  // ---------------- Sprint dropdown (multi-select; options scoped to selected Year(s)) ----------------
-  function buildSprintDropdown(){
-    const panel = document.getElementById("sprintDropdownPanel");
-    const keyToLabel = new Map();
+  function buildSprintOptions(){
+    const sel = document.getElementById("sprintFilter");
+    const seen = new Map();
     availableDates.forEach(d => {
       const s = getSprintInfo(d);
-      if (selectedYears.size && !selectedYears.has(String(s.year))) return;
-      keyToLabel.set(s.key, selectedYears.size === 1 ? s.shortLabel : s.longLabel);
+      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return;
+      seen.set(s.key, selectedYear === "all" ? s.longLabel : s.shortLabel);
     });
-    const keys = [...keyToLabel.keys()].sort();
-    selectedSprintKeys = new Set([...selectedSprintKeys].filter(k => keyToLabel.has(k)));
-
-    panel.innerHTML = "";
-    if (!keys.length){
-      panel.innerHTML = '<div style="padding:10px 8px; font-size:12.5px; color:var(--muted);">No published sprints in this selection yet.</div>';
-    } else {
-      const allRow = document.createElement("label");
-      allRow.className = "date-dropdown-row date-dropdown-all";
-      allRow.innerHTML = '<input type="checkbox" id="sprintSelectAll" ' + (selectedSprintKeys.size===0 ? "checked" : "") + ' /><span>All sprints</span>';
-      panel.appendChild(allRow);
-      panel.appendChild(Object.assign(document.createElement("div"), { className: "date-dropdown-divider" }));
-      keys.forEach(key => {
-        const row = document.createElement("label");
-        row.className = "date-dropdown-row";
-        row.innerHTML = '<input type="checkbox" data-sprint-key="' + key + '" ' + (selectedSprintKeys.has(key) ? "checked" : "") + ' /><span>' + escapeHtml(keyToLabel.get(key)) + '</span>';
-        panel.appendChild(row);
-      });
-      panel.querySelector("#sprintSelectAll").addEventListener("change", (e) => {
-        if (e.target.checked) selectedSprintKeys.clear();
-        onSnapshotFilterChanged();
-      });
-      panel.querySelectorAll("input[data-sprint-key]").forEach(cb => {
-        cb.addEventListener("change", (e) => {
-          const key = e.target.dataset.sprintKey;
-          if (e.target.checked) selectedSprintKeys.add(key); else selectedSprintKeys.delete(key);
-          onSnapshotFilterChanged();
-        });
-      });
-    }
-
-    document.getElementById("sprintDropdownLabel").textContent =
-      selectedSprintKeys.size === 0 ? "All sprints" :
-      selectedSprintKeys.size === 1 ? (keyToLabel.get([...selectedSprintKeys][0]) || [...selectedSprintKeys][0]) :
-      selectedSprintKeys.size + " sprints selected";
-
-    wireDropdownTrigger("sprintDropdownTrigger", "sprintDropdownPanel");
+    const keys = [...seen.keys()].sort();
+    const prevValue = sel.value;
+    sel.innerHTML = '<option value="all">All sprints</option>';
+    keys.forEach(key => {
+      const opt = document.createElement("option");
+      opt.value = key; opt.textContent = seen.get(key);
+      sel.appendChild(opt);
+    });
+    if (keys.includes(prevValue)) sel.value = prevValue;
+    else sel.value = "all";
   }
+  document.getElementById("yearFilter").addEventListener("change", (e) => {
+    selectedYear = e.target.value;
+    selectedSprint = "all"; // sprint list depends on year, so reset it whenever the year changes
+    const inScope = availableDates.filter(d => selectedYear === "all" || String(getSprintInfo(d).year) === String(selectedYear));
+    selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
+    if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
+    buildDateChips();
+    loadAndRenderSelectedDates();
+  });
+  document.getElementById("sprintFilter").addEventListener("change", (e) => {
+    selectedSprint = e.target.value;
+    // drop any selected dates that fall outside the newly chosen year/sprint
+    const inScope = availableDates.filter(d => {
+      const s = getSprintInfo(d);
+      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
+      return selectedSprint === "all" || s.key === selectedSprint;
+    });
+    selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
+    if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
+    buildDateChips();
+    loadAndRenderSelectedDates();
+  });
 
-  // ---------------- Date dropdown (multi-select; options scoped to selected Year(s)/Sprint(s)) ----------------
-  function buildDateChips(){
+  // outside-click-to-close is wired once here, not inside buildDateChips (which can
+  // run repeatedly whenever the sprint filter changes) — avoids stacking duplicate listeners
+  document.addEventListener("click", (e) => {
     const panel = document.getElementById("dateDropdownPanel");
-    const visibleDates = availableDates.filter(dateInScope);
-    const latestOverall = availableDates[availableDates.length - 1];
+    if (panel && !document.getElementById("dateDropdown").contains(e.target)) panel.style.display = "none";
+  });
 
-    // drop picks that fell out of scope; if nothing's left, default to the latest visible date
-    selectedDates = new Set([...selectedDates].filter(d => visibleDates.includes(d)));
-    if (!selectedDates.size && visibleDates.length) selectedDates = new Set([visibleDates[visibleDates.length-1]]);
+  function buildDateChips(){
+    buildYearOptions();
+    buildSprintOptions();
+    const trigger = document.getElementById("dateDropdownTrigger");
+    const panel = document.getElementById("dateDropdownPanel");
+    const visibleDates = availableDates.filter(d => {
+      const s = getSprintInfo(d);
+      if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
+      if (selectedSprint !== "all" && s.key !== selectedSprint) return false;
+      return true;
+    });
+    const latestOverall = availableDates[availableDates.length - 1];
 
     panel.innerHTML = "";
 
@@ -1157,7 +953,7 @@
 
     const allRow = document.createElement("label");
     allRow.className = "date-dropdown-row date-dropdown-all";
-    const scopeLabel = (selectedYears.size || selectedSprintKeys.size) ? " in selection" : "";
+    const scopeLabel = (selectedYear !== "all" || selectedSprint !== "all") ? " in selection" : "";
     allRow.innerHTML = '<input type="checkbox" id="dateSelectAll" /><span>Select all'+scopeLabel+'</span>';
     panel.appendChild(allRow);
     const divider = document.createElement("div");
@@ -1190,8 +986,7 @@
         else e.target.checked = true; // block unchecking the last remaining date
         updateSelectAllState();
         updateDateDropdownLabel();
-        loadAndRenderComparison();
-        syncMainDashboardToSelection();
+        loadAndRenderSelectedDates();
       });
     });
 
@@ -1205,14 +1000,17 @@
       panel.querySelectorAll("input[data-date]").forEach(cb => { cb.checked = selectedDates.has(cb.dataset.date); });
       updateSelectAllState();
       updateDateDropdownLabel();
-      loadAndRenderComparison();
-      syncMainDashboardToSelection();
+      loadAndRenderSelectedDates();
     });
+
+    trigger.onclick = (e) => {
+      e.stopPropagation();
+      panel.style.display = panel.style.display === "block" ? "none" : "block";
+    };
 
     updateSelectAllState();
     updateDateDropdownLabel();
     document.getElementById("snapshotsSection").style.display = "block";
-    wireDropdownTrigger("dateDropdownTrigger", "dateDropdownPanel");
   }
 
   function updateDateDropdownLabel(){
@@ -1223,28 +1021,23 @@
       : sorted.length + " dates selected";
   }
 
-  // drives ONLY the trend chart/table — the main dashboard is kept in sync
-  // separately by syncMainDashboardToSelection() / applySprintModeAndRender()
-  function loadAndRenderComparison(){
-    const rows = computeCompareRows();
-    if (rows.length > 1){
-      const mainDates = rows.map(r => r.date);
-      const baselineDates = [...new Set(rows.map(r => r.baselineDate).filter(Boolean))];
-      Promise.all([
-        Promise.all(mainDates.map(loadAgg)),
-        Promise.all(baselineDates.map(loadAgg))
-      ]).then(([payloads, baselinePayloads]) => {
-        const baselineMap = new Map(baselineDates.map((d, i) => [d, baselinePayloads[i]]));
-        lastTrendRows = rows; lastTrendPayloads = payloads; lastTrendBaselineMap = baselineMap;
-        renderTrend(rows, payloads, baselineMap);
+  // drives ONLY the historical trend chart/table — the main dashboard (stat
+  // cards, charts, filters, directory) always reflects the latest full dataset,
+  // loaded separately by loadFullSnapshotForLatestDate()
+  function loadAndRenderSelectedDates(){
+    const dates = [...selectedDates].sort();
+    Promise.all(dates.map(loadAgg)).then(payloads => {
+      if (payloads.length > 1){
+        lastTrendDates = dates; lastTrendPayloads = payloads;
+        renderTrend(dates, payloads);
         document.getElementById("trendWrap").style.display = "block";
-      }).catch(() => {
-        showToast("Couldn't load one of the selected snapshots for comparison.");
-      });
-    } else {
-      lastTrendRows = null; lastTrendPayloads = null; lastTrendBaselineMap = null;
-      document.getElementById("trendWrap").style.display = "none";
-    }
+      } else {
+        lastTrendDates = null; lastTrendPayloads = null;
+        document.getElementById("trendWrap").style.display = "none";
+      }
+    }).catch(() => {
+      showToast("Couldn't load one of the selected snapshot dates.");
+    });
   }
 
   // country and program breakdowns are stored separately in each agg file, so
@@ -1274,58 +1067,25 @@
   }
 
   function refreshTrendIfVisible(){
-    if (lastTrendRows && lastTrendPayloads) renderTrend(lastTrendRows, lastTrendPayloads, lastTrendBaselineMap);
+    if (lastTrendDates && lastTrendPayloads) renderTrend(lastTrendDates, lastTrendPayloads);
   }
 
-  function renderTrend(rows, payloads, baselineMap){
-    const isPeriodMode = rows.some(r => r.periodMode);
-    const anyFallback = rows.some(r => r.periodMode && !r.baselineDate);
-    // rows with no baseline (earliest sprint/year on record) can't show
-    // period-only growth, so they fall back to a cumulative total — flagged
-    // with an asterisk and explained in the footnote below the table
-    const labels = rows.map(r => (r.periodMode && !r.baselineDate) ? r.label + " *" : r.label);
-
+  function renderTrend(dates, payloads){
     const filtered = payloads.map(filteredTrendTotals);
+    const totalsList = filtered.map(f => f.totals);
     const anyLimited = filtered.some(f => f.limited);
 
-    const totalsList = rows.map((r, i) => {
-      const endTotals = filtered[i].totals;
-      if (!r.periodMode || !r.baselineDate) return endTotals; // date rows, or a period with no prior snapshot
-      const baselinePayload = baselineMap ? baselineMap.get(r.baselineDate) : null;
-      const baselineTotals = baselinePayload ? filteredTrendTotals(baselinePayload).totals : { enrolled:0, activated:0, paid:0 };
-      return {
-        enrolled: endTotals.enrolled - baselineTotals.enrolled,
-        activated: endTotals.activated - baselineTotals.activated,
-        paid: endTotals.paid - baselineTotals.paid
-      };
-    });
-
-    document.getElementById("trendDateHeader").textContent = compareGranularityLabel();
-
     const noteEl = document.getElementById("trendFilterNote");
-    const noteParts = [];
-    if (isPeriodMode){
-      noteParts.push("Enrolled/Activated/Paid below show growth DURING each " + compareGranularityLabel().toLowerCase() + " only (vs. the last snapshot right before it began) — not cumulative totals.");
-    }
     if (filters.countries.size || filters.programs.size){
-      if (filters.countries.size && filters.programs.size) noteParts.push("Both Program and Country filters are active — this reflects the Country filter only (can't combine both from published history).");
-      else if (filters.countries.size) noteParts.push("Filtered to: " + [...filters.countries].join(", ") + ".");
-      else if (filters.programs.size) noteParts.push("Filtered to: " + [...filters.programs].join(", ") + ".");
-      if (anyLimited) noteParts.push("Some snapshots were published before this filter data existed, so they show unfiltered totals.");
-    }
-    if (noteParts.length){
-      noteEl.textContent = noteParts.join(" ");
+      let msg = "Reflecting your Program/Country filters where possible.";
+      if (filters.countries.size && filters.programs.size) msg = "Both Program and Country filters are active — this chart applies the Country filter only (can't combine both from published history).";
+      else if (filters.countries.size) msg = "Filtered to: " + [...filters.countries].join(", ") + ".";
+      else if (filters.programs.size) msg = "Filtered to: " + [...filters.programs].join(", ") + ".";
+      if (anyLimited) msg += " Some older dates were published before this filter data existed, so they show unfiltered totals.";
+      noteEl.textContent = msg;
       noteEl.style.display = "block";
     } else {
       noteEl.style.display = "none";
-    }
-
-    const footnoteEl = document.getElementById("trendFootnote");
-    if (anyFallback){
-      footnoteEl.textContent = "* No snapshot exists before this " + compareGranularityLabel().toLowerCase() + " — showing its cumulative total instead of period-only growth.";
-      footnoteEl.style.display = "block";
-    } else {
-      footnoteEl.style.display = "none";
     }
 
     const c = chartColors();
@@ -1333,7 +1093,7 @@
     trendChartRef = new Chart(document.getElementById("trendChart"), {
       type: "line",
       data: {
-        labels: labels,
+        labels: dates,
         datasets: [
           { label:"Enrolled", data: totalsList.map(t=>t.enrolled), borderColor: c.text, backgroundColor: c.text, tension:0.25 },
           { label:"Activated", data: totalsList.map(t=>t.activated), borderColor: c.activated, backgroundColor: c.activated, tension:0.25 },
@@ -1361,7 +1121,7 @@
       const convA = t.paid ? (t.activated/t.paid*100).toFixed(1) : "0.0";
       const tr = document.createElement("tr");
       tr.innerHTML =
-        "<td>"+escapeHtml(labels[i])+"</td>" +
+        "<td>"+escapeHtml(dates[i])+"</td>" +
         "<td>"+t.enrolled.toLocaleString()+"</td>" +
         "<td>"+t.activated.toLocaleString()+"</td>" +
         "<td>"+t.paid.toLocaleString()+"</td>" +
@@ -1373,97 +1133,27 @@
     });
   }
 
-  // loads the full per-learner dataset for a date and makes it the dashboard's
-  // current "as of" snapshot, then figures out whether sprint-growth mode
-  // should be active for it
+  // fetches and merges every part file for a given date, then feeds the result
+  // through the exact same pipeline a live CSV upload uses — so Executive View
+  // gets the full filterable dashboard, not just aggregate counts
   function loadFullSnapshotForDate(date){
-    return fetchFullLearnersForDate(date).then(payload => {
-      cumulativeLearners = payload.learners;
-      currentFullSnapshotDate = date;
-      applySprintModeAndRender(payload.publishedAt);
-    }).catch(() => {
-      showToast("Couldn't load the full snapshot for " + date + ".");
-    });
-  }
-
-  // Builds a per-learner diff between `currentList` (as of the sprint's end)
-  // and `baselineMap` (as of right before the sprint started). Only learners
-  // with at least one status change during the sprint are included. Each
-  // returned row carries the CURRENT country/program/gender info (so the
-  // existing country/program filter chips work unchanged) but DELTA booleans
-  // for enrolled/activated/paid/graduated/multi.
-  function computeDeltaLearners(currentList, baselineMap){
-    const rows = [];
-    currentList.forEach(L => {
-      const base = baselineMap.get(L.email);
-      const isNewEnrolled = !base;
-      const wasActivated = base ? base.activated : false;
-      const wasPaid = base ? base.paid : false;
-      const wasGraduated = base ? base.graduated : false;
-      const wasMulti = base ? base.multi : false;
-      const isNewActivated = !!L.activated && !wasActivated;
-      const isNewPaid = !!L.paid && !wasPaid;
-      const isNewGraduated = !!L.graduated && !wasGraduated;
-      const isNewMulti = !!L.multi && !wasMulti;
-      if (!(isNewEnrolled || isNewActivated || isNewPaid || isNewGraduated || isNewMulti)) return;
-      rows.push({
-        email: L.email, first: L.first, last: L.last, gender: L.gender,
-        country: L.country, region: L.region, programs: L.programs,
-        enrolled: isNewEnrolled, activated: isNewActivated, paid: isNewPaid,
-        graduated: isNewGraduated, multi: isNewMulti
-      });
-    });
-    return rows;
-  }
-
-  // Decides whether the current Sprint selection should put the whole
-  // dashboard into "sprint growth" mode: only when EXACTLY ONE sprint is
-  // selected (2+ sprints means "compare them" via the trend section instead,
-  // handled by computeCompareRows/loadAndRenderComparison).
-  function applySprintModeAndRender(publishedAt){
-    finalizeLearnersData(); // rebuilds program/country/module filter option lists from cumulativeLearners
-
-    function finish(){
-      learners = sprintDeltaActive ? deltaLearners : cumulativeLearners;
+    const parts = datePartsMap.get(date) || 1;
+    const fetches = [];
+    for (let p = 1; p <= parts; p++){
+      fetches.push(
+        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
+          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
+      );
+    }
+    return Promise.all(fetches).then(chunks => {
+      let merged = [];
+      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
+      learners = merged;
+      finalizeLearnersData();
       renderAll();
-      if (publishedAt) setLastUpdated(new Date(publishedAt), "published");
+      const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
+      setLastUpdated(publishedAt, "published");
       document.getElementById("snapshotsSection").style.display = availableDates.length ? "block" : "none";
-    }
-
-    if (selectedSprintKeys.size !== 1){
-      sprintDeltaActive = false;
-      deltaLearners = [];
-      sprintBaselineDate = null;
-      activeSprintKey = null;
-      finish();
-      return;
-    }
-
-    const key = [...selectedSprintKeys][0];
-    activeSprintKey = key;
-    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === key);
-    const idx = sprintDates.length ? availableDates.indexOf(sprintDates[0]) : -1;
-    const baselineDate = idx > 0 ? availableDates[idx - 1] : null;
-    sprintBaselineDate = baselineDate;
-
-    if (!baselineDate){
-      // earliest sprint on record — nothing published before it to diff against
-      sprintDeltaActive = false;
-      deltaLearners = [];
-      finish();
-      return;
-    }
-
-    fetchFullLearnersForDate(baselineDate).then(basePayload => {
-      const baselineMap = new Map(basePayload.learners.map(L => [L.email, L]));
-      deltaLearners = computeDeltaLearners(cumulativeLearners, baselineMap);
-      sprintDeltaActive = true;
-      finish();
-    }).catch(() => {
-      sprintDeltaActive = false;
-      deltaLearners = [];
-      finish();
-      showToast("Couldn't load the baseline snapshot (" + baselineDate + ") needed for sprint growth — showing cumulative totals instead.");
     });
   }
 
@@ -1480,7 +1170,9 @@
         availableDates = entries.map(e => e.date);
         datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
         selectedDates = new Set([availableDates[availableDates.length-1]]);
-        applySnapshotSelection();
+        buildDateChips();
+        loadFullSnapshotForDate(availableDates[availableDates.length-1]);
+        loadAndRenderSelectedDates();
       })
       .catch(() => tryLoadLegacySnapshot());
   }
@@ -1544,18 +1236,12 @@
           page = 1;
 
           aggregate(parsed.data);
-          // a locally-loaded CSV isn't a published snapshot date, so sprint
-          // growth (which needs a baseline snapshot) doesn't apply to it
-          currentFullSnapshotDate = null;
-          sprintDeltaActive = false;
-          deltaLearners = [];
-          learners = cumulativeLearners;
           spinner.classList.remove("show");
           fileStatus.classList.add("ok");
-          fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + cumulativeLearners.length.toLocaleString() + " unique learners";
+          fileStatusText.textContent = "Loaded " + file.name + " · " + parsed.data.length.toLocaleString() + " rows · " + learners.length.toLocaleString() + " unique learners";
           setLastUpdated(new Date(), "local");
           document.getElementById("snapshotsSection").style.display = "none";
-          renderAll();
+          renderAll(true);
         }));
       };
       reader.onerror = function(){
@@ -1575,6 +1261,18 @@
   function normalizeCountry(raw){
     const c = (raw || "").trim();
     return HUB_COUNTRIES.includes(c) ? c : "Other";
+  }
+  // Same idea as HUB_COUNTRIES: these are the only real programs offered.
+  // Anything else in the CSV's "Program name" column is actually a stray
+  // module/course name that leaked into that field, so it gets bucketed
+  // into "Other" instead of cluttering the program filter.
+  const HUB_PROGRAMS = [
+    "Data Analytics", "Data Science", "AI Career Essentials", "Virtual Assistant",
+    "Freelancer Academy", "Content Creation", "Founder Academy", "Graphic Design"
+  ];
+  function normalizeProgram(raw){
+    const p = (raw || "").trim();
+    return HUB_PROGRAMS.includes(p) ? p : "Other";
   }
 
   function aggregate(rows){
@@ -1607,7 +1305,7 @@
       if (row["Payment plan status"] === "ACTIVE") L.paid = true;
       if (row["Learner health classification status"] === "Graduated" || row["Is program graduated"] === "Yes") L.graduated = true;
 
-      const program = row["Program name"] || "n/a";
+      const program = normalizeProgram(row["Program name"]);
       const courseName = row["Course name"] || "n/a";
       const seqRaw = row["Course sequence number"];
       const seq = (seqRaw === "" || seqRaw === undefined || seqRaw === null) ? -1 : parseInt(seqRaw, 10);
@@ -1624,48 +1322,46 @@
       }
     }
 
-    // finalize into a plain array for fast repeated filtering
-    const built = [];
+    // finalize into plain arrays for fast repeated filtering
+    learners = [];
     for (const L of map.values()){
       const progArr = [];
       for (const [name, info] of L.programs.entries()){
         progArr.push({ program: name, course: info.name, status: info.status, health: info.health });
       }
-      built.push({
+      const realProgramCount = progArr.filter(p => p.program !== "Other").length;
+      learners.push({
         email: L.email, first: L.first, last: L.last, gender: L.gender,
         country: L.country, region: L.region,
         activated: L.activated, paid: L.paid, graduated: L.graduated,
-        programs: progArr, multi: progArr.length > 1
+        programs: progArr, multi: realProgramCount > 1
       });
     }
 
-    cumulativeLearners = built;
     finalizeLearnersData();
   }
 
-  // (re)computes program/country/course option lists from `cumulativeLearners`
-  // — always the FULL as-of-date set, regardless of whether sprint-growth mode
-  // is currently narrowing what's actually rendered, so the filter chips never
-  // shrink just because a sprint delta happens to be small.
+  // (re)computes program/country/course option lists from whatever is currently in
+  // `learners` — used after a fresh CSV parse AND after loading a published snapshot
   function finalizeLearnersData(){
     const progCount = new Map();
     const countryCount = new Map();
     const courseSet = new Set();
-    for (const L of cumulativeLearners){
+    for (const L of learners){
       for (const p of L.programs){
         progCount.set(p.program, (progCount.get(p.program)||0)+1);
         if (p.course !== "n/a") courseSet.add(p.program + " — " + p.course);
       }
       countryCount.set(L.country, (countryCount.get(L.country)||0)+1);
     }
-    allPrograms = [...progCount.keys()].sort((a,b)=>progCount.get(b)-progCount.get(a));
+    allPrograms = [...progCount.keys()].filter(p => p !== "Other").sort((a,b)=>progCount.get(b)-progCount.get(a));
     allCountries = [...countryCount.keys()].filter(c => c !== "Other").sort((a,b)=>countryCount.get(b)-countryCount.get(a));
     allCourses = [...courseSet].sort();
 
     buildFilterUI();
   }
 
-  // ---------------- Filter UI construction (only rebuilt on new upload/snapshot) ----------------
+  // ---------------- Filter UI construction (only rebuilt on new upload) ----------------
   function buildFilterUI(){
     const progWrap = document.getElementById("programChips");
     progWrap.innerHTML = "";
@@ -1709,7 +1405,6 @@
     const el = document.createElement("div");
     el.className = "chip";
     el.textContent = label;
-    if (filters[setName].has(label)) el.classList.add("active");
     el.addEventListener("click", () => {
       const set = filters[setName];
       if (set.has(label)) set.delete(label); else set.add(label);
@@ -1756,30 +1451,22 @@
   });
 
   document.getElementById("rankMetric").addEventListener("change", () => {
-    if (viewMode === "full") renderScoreboard(computeCountryAgg(getFiltered(), sprintDeltaActive), true);
+    if (viewMode === "full") renderScoreboard(computeCountryAgg(getFiltered()), true);
     else if (viewMode === "summary" && publishedAgg) renderScoreboard(new Map(Object.entries(publishedAgg.byCountry)), false);
   });
 
   document.getElementById("prevPage").addEventListener("click", () => { if (page>1){ page--; renderTable(); }});
   document.getElementById("nextPage").addEventListener("click", () => { page++; renderTable(); });
 
-  // shared builder — reused by the directory export and each per-card export below.
-  // Works for both cumulative learner rows and sprint-delta rows, since both
-  // shapes carry the same field names (activated/paid meaning "new this sprint"
-  // when sprintDeltaActive is true).
+  // shared builder — reused by the directory export and each per-card export below
   function learnersToCsv(rows){
-    const activatedHeader = sprintDeltaActive ? "Newly activated" : "Activated";
-    const paidHeader = sprintDeltaActive ? "Newly paid" : "Paid";
-    const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status",activatedHeader,paidHeader];
-    if (sprintDeltaActive) header.splice(5, 0, "Newly enrolled");
+    const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status","Activated","Paid"];
     const lines = [header.join(",")];
     rows.forEach(L => {
       const progs = L.programs.map(p=>p.program).join(" | ");
       const mods = L.programs.map(p=>p.program+": "+p.course+" ("+p.status+")").join(" | ");
       const healths = L.programs.map(p=>p.program+": "+p.health).join(" | ");
-      const cells = [L.email, L.first, L.last, L.gender, L.country, L.programs.length];
-      if (sprintDeltaActive) cells.push(L.enrolled ? "Yes" : "No");
-      cells.push(progs, mods, healths, L.activated?"Yes":"No", L.paid?"Yes":"No");
+      const cells = [L.email, L.first, L.last, L.gender, L.country, L.programs.length, progs, mods, healths, L.activated?"Yes":"No", L.paid?"Yes":"No"];
       lines.push(cells.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(","));
     });
     return lines.join("\n");
@@ -1794,12 +1481,11 @@
   }
 
   document.getElementById("exportBtn").addEventListener("click", () => {
-    const filename = sprintDeltaActive ? "learner_sprint_growth_export.csv" : "learner_outreach_export.csv";
-    downloadCsvBlob(learnersToCsv(getFiltered()), filename);
+    downloadCsvBlob(learnersToCsv(getFiltered()), "learner_outreach_export.csv");
   });
 
   const STAT_METRIC_FILTERS = {
-    enrolled: rows => sprintDeltaActive ? rows.filter(r => r.enrolled) : rows,
+    enrolled: rows => rows,
     activated: rows => rows.filter(r => r.activated),
     paid: rows => rows.filter(r => r.paid),
     graduated: rows => rows.filter(r => r.graduated),
@@ -1809,7 +1495,7 @@
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (!learners.length){
-        showToast("No matching learners to export.");
+        showToast("Load data first, then export.");
         return;
       }
       const metric = btn.dataset.metric;
@@ -1818,8 +1504,7 @@
         showToast("No " + metric + " learners match the current filters.");
         return;
       }
-      const suffix = sprintDeltaActive ? "_sprint_growth" : "";
-      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + suffix + "_" + todayDateString() + ".csv");
+      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + "_" + todayDateString() + ".csv");
       showToast("Downloaded " + rows.length.toLocaleString() + " " + metric + " learner" + (rows.length===1?"":"s") + " (CSV).");
     });
   });
@@ -1851,33 +1536,30 @@
   // ---------------- Render orchestration ----------------
   function renderAll(){
     updateEmptyState();
-    if (!cumulativeLearners.length) return;
+    if (!learners.length) return;
     viewMode = "full";
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
     const filtered = getFiltered();
-    const totals = sprintDeltaActive ? computeDeltaTotals(filtered) : computeTotals(filtered);
-    renderStats(totals, sprintDeltaActive);
-    renderGenderChart(computeGenderCounts(filtered, sprintDeltaActive), sprintDeltaActive);
-    renderBarChart(computeCountryAgg(filtered, sprintDeltaActive));
-    renderScoreboard(computeCountryAgg(filtered, sprintDeltaActive), true);
+    renderStats(computeTotals(filtered));
+    renderGenderChart(computeGenderCounts(filtered));
+    renderBarChart(computeCountryAgg(filtered));
+    renderScoreboard(computeCountryAgg(filtered), true);
     renderTable();
-    renderSprintModeBanner();
-    updateModeNotes();
   }
 
   // Public/summary mode: only aggregate counts are available (no per-learner
-  // rows), so filters and the learner directory are hidden. Sprint-growth mode
-  // never applies here.
+  // rows), so filters and the learner directory are hidden — there's nothing
+  // for them to operate on.
   function renderPublicSummary(payload){
     viewMode = "summary";
     publishedAgg = payload;
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
-    renderStats(payload.totals, false);
-    renderGenderChart(new Map(Object.entries(payload.gender)), false);
+    renderStats(payload.totals);
+    renderGenderChart(new Map(Object.entries(payload.gender)));
     const countryAgg = new Map(Object.entries(payload.byCountry));
     renderBarChart(countryAgg);
     renderScoreboard(countryAgg, false);
@@ -1894,105 +1576,21 @@
     };
   }
 
-  // Sprint-growth version: "enrolled" must be filtered too (rows.length would
-  // count everyone TOUCHED this sprint, not just those newly enrolled), so
-  // every figure is independently the count of learners who newly reached
-  // that particular status during the sprint.
-  function computeDeltaTotals(rows){
-    return {
-      enrolled: rows.filter(r=>r.enrolled).length,
-      activated: rows.filter(r=>r.activated).length,
-      paid: rows.filter(r=>r.paid).length,
-      graduated: rows.filter(r=>r.graduated).length,
-      multi: rows.filter(r=>r.multi).length
-    };
-  }
-
-  function renderStats(totals, deltaMode){
+  function renderStats(totals){
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
     document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
+    const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
+    document.getElementById("statEnrolledPct").textContent = anyFilterActive
+      ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
+      : "matching current filters";
     document.getElementById("statActivated").textContent = activated.toLocaleString();
+    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
     document.getElementById("statPaid").textContent = paid.toLocaleString();
+    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
     document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
+    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
     document.getElementById("statMulti").textContent = multi.toLocaleString();
-
-    if (deltaMode){
-      // Two separate comparisons, matching what cumulative mode already gives:
-      // (1) within-scope ratios — how Activated relates to Enrolled/Paid, how
-      //     Graduated relates to Enrolled/Activated/Paid — always shown, using
-      //     whatever's currently filtered, exactly like cumulative mode does.
-      // (2) "share of the whole sprint" — how the filtered slice compares to
-      //     the FULL sprint's growth across every country/program — shown only
-      //     when a filter is actually narrowing things down.
-      const fullDeltaTotals = computeDeltaTotals(deltaLearners);
-      const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
-
-      document.getElementById("statEnrolledPct").textContent = anyFilterActive
-        ? pct(enrolled, fullDeltaTotals.enrolled) + "% of total newly enrolled this sprint (" + fullDeltaTotals.enrolled.toLocaleString() + ")"
-        : "newly enrolled this sprint";
-
-      const activatedWithinScope = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
-      document.getElementById("statActivatedPct").textContent = anyFilterActive
-        ? activatedWithinScope + " · " + pct(activated, fullDeltaTotals.activated) + "% of total newly activated this sprint (" + fullDeltaTotals.activated.toLocaleString() + ")"
-        : activatedWithinScope;
-
-      const paidWithinScope = pct(paid,enrolled) + "% of enrolled";
-      document.getElementById("statPaidPct").textContent = anyFilterActive
-        ? paidWithinScope + " · " + pct(paid, fullDeltaTotals.paid) + "% of total newly paid this sprint (" + fullDeltaTotals.paid.toLocaleString() + ")"
-        : paidWithinScope;
-
-      const graduatedWithinScope = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
-      document.getElementById("statGraduatedPct").textContent = anyFilterActive
-        ? graduatedWithinScope + " · " + pct(graduated||0, fullDeltaTotals.graduated) + "% of total newly graduated this sprint (" + fullDeltaTotals.graduated.toLocaleString() + ")"
-        : graduatedWithinScope;
-    } else {
-      const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
-      document.getElementById("statEnrolledPct").textContent = anyFilterActive
-        ? pct(enrolled, cumulativeLearners.length) + "% of total enrolled (" + cumulativeLearners.length.toLocaleString() + ")"
-        : "matching current filters";
-      document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
-      document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
-      document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
-    }
-  }
-
-  // Small banner above the filters explaining what mode the whole dashboard is
-  // currently in — every chart/list below it reflects the same scope this describes.
-  function renderSprintModeBanner(){
-    const el = document.getElementById("sprintGrowthNote");
-    if (!sprintDeltaActive){
-      if (selectedSprintKeys.size === 1 && !sprintBaselineDate){
-        el.textContent = "Earliest published sprint on record — no prior snapshot to diff against, so the dashboard below is showing cumulative totals instead of sprint-only growth.";
-        el.style.display = "block";
-      } else {
-        el.style.display = "none";
-      }
-      return;
-    }
-    const sprintDates = availableDates.filter(d => getSprintInfo(d).key === activeSprintKey);
-    const sprintLabel = sprintDates.length ? getSprintInfo(sprintDates[sprintDates.length-1]).longLabel : activeSprintKey;
-    el.innerHTML =
-      "<strong>Showing sprint growth for " + escapeHtml(sprintLabel) + "</strong> — every stat card, chart, the leaderboard, and the directory below reflect only what changed since the last snapshot before it (" +
-      escapeHtml(sprintBaselineDate) + "). Program/Country/Module filters still apply on top of this. Select 2+ sprints instead to compare them side-by-side in the trend section above.";
-    el.style.display = "block";
-  }
-
-  // Small "mode" labels shown next to individual card headers, so it's obvious
-  // at a glance which sections are currently showing sprint-only growth.
-  function updateModeNotes(){
-    const label = sprintDeltaActive ? "New activity this sprint" : "";
-    ["barChartModeNote","scoreboardModeNote","directoryModeNote"].forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.textContent = label;
-      el.style.display = label ? (id === "directoryModeNote" ? "block" : "inline") : "none";
-    });
-    const genderNote = document.getElementById("genderModeNote");
-    if (genderNote){
-      genderNote.textContent = sprintDeltaActive ? "New enrollments only" : "";
-      genderNote.style.display = sprintDeltaActive ? "inline" : "none";
-    }
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
@@ -2006,19 +1604,13 @@
     return map[g] || "•";
   }
 
-  // In sprint-growth mode, the gender split describes NEWLY ENROLLED learners
-  // only (gender doesn't really "activate" or "pay", so the most meaningful
-  // sprint-scoped reading is: who's newly joining this sprint, by gender).
-  function computeGenderCounts(rows, deltaMode){
+  function computeGenderCounts(rows){
     const counts = new Map();
-    rows.forEach(r => {
-      if (deltaMode && !r.enrolled) return;
-      counts.set(r.gender, (counts.get(r.gender)||0)+1);
-    });
+    rows.forEach(r => counts.set(r.gender, (counts.get(r.gender)||0)+1));
     return counts;
   }
 
-  function renderGenderChart(counts, deltaMode){
+  function renderGenderChart(counts){
     const rawLabels = [...counts.keys()];
     const data = rawLabels.map(l=>counts.get(l));
     const total = data.reduce((a,b)=>a+b,0) || 1;
@@ -2028,7 +1620,6 @@
     const c = chartColors();
 
     document.getElementById("genderCenterValue").textContent = total.toLocaleString();
-    document.getElementById("donutCenterLabel").textContent = deltaMode ? "New" : "Learners";
 
     const legendWrap = document.getElementById("genderLegend");
     legendWrap.innerHTML = "";
@@ -2057,18 +1648,13 @@
     });
   }
 
-  // `deltaMode` controls what "enrolled" means per country: the raw row count
-  // (cumulative) or only rows newly enrolled this sprint (delta). Activated/paid
-  // always come from whatever boolean the row already carries.
-  function computeCountryAgg(rows, deltaMode){
+  function computeCountryAgg(rows){
     const agg = new Map();
     rows.forEach(L => {
       if (L.country === "Other") return; // keep country views scoped to the 8 hub countries
       let g = agg.get(L.country);
       if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(L.country, g); }
-      if (deltaMode){ if (L.enrolled) g.enrolled++; } else { g.enrolled++; }
-      if (L.activated) g.activated++;
-      if (L.paid) g.paid++;
+      g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
     });
     return agg;
   }
@@ -2077,6 +1663,7 @@
     const agg = new Map();
     rows.forEach(L => {
       L.programs.forEach(p => {
+        if (p.program === "Other") return; // keep program views scoped to the 8 real programs
         let g = agg.get(p.program);
         if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(p.program, g); }
         g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
@@ -2086,7 +1673,7 @@
   }
 
   function renderBarChart(groups){
-    const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0 || groups.get(k).activated > 0 || groups.get(k).paid > 0)
+    const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0)
       .sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
 
     const c = chartColors();
@@ -2126,7 +1713,7 @@
       enrolled: v.enrolled, activated: v.activated, paid: v.paid,
       convEnrolled: v.enrolled ? v.paid/v.enrolled : 0,
       convActivated: v.paid ? v.activated/v.paid : 0
-    })).filter(c => c.enrolled > 0 || c.activated > 0 || c.paid > 0);
+    })).filter(c => c.enrolled > 0);
 
     const metric = document.getElementById("rankMetric").value;
     list.sort((a,b) => b[metric] - a[metric]);
@@ -2140,11 +1727,6 @@
         '<span></span>' +
       '</div>';
 
-    if (!list.length){
-      board.innerHTML += '<div style="padding:16px 4px; color:var(--muted); font-size:12.5px;">No countries match the current filters' + (sprintDeltaActive ? " with any activity this sprint." : ".") + '</div>';
-      return;
-    }
-
     list.forEach((c, i) => {
       const lane = document.createElement("div");
       lane.className = "lane";
@@ -2154,8 +1736,8 @@
       let trackInner;
       if (metric === "enrolled"){
         // the one case with enough shared scale to show the activated/paid funnel inside the bar
-        const actWidth = c.enrolled ? Math.min(100, (c.activated / c.enrolled) * 100) : 0;
-        const paidWidth = c.enrolled ? Math.min(100, (c.paid / c.enrolled) * 100) : 0;
+        const actWidth = c.enrolled ? (c.activated / c.enrolled) * 100 : 0;
+        const paidWidth = c.enrolled ? (c.paid / c.enrolled) * 100 : 0;
         trackInner = '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
                      '<div class="seg-paid" style="width:'+paidWidth.toFixed(1)+'%"></div>';
       } else {
@@ -2197,11 +1779,7 @@
 
   function renderTable(){
     const rows = getFilteredWithSearch();
-    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + (sprintDeltaActive ? " learners with sprint activity" : " learners");
-
-    document.getElementById("thActivated").textContent = sprintDeltaActive ? "Newly Activated" : "Activated";
-    document.getElementById("thPaid").textContent = sprintDeltaActive ? "Newly Paid" : "Paid";
-
+    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + " learners";
     const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
     if (page > totalPages) page = totalPages;
     const startIdx = (page-1)*PAGE_SIZE;
@@ -2217,11 +1795,10 @@
       const progCountBadge = '<span class="'+countBadgeClass+'">'+progCount+'</span>';
       const moduleLines = L.programs.map(p => '<span class="module-line">'+escapeHtml(p.program)+': '+escapeHtml(p.course)+' ('+escapeHtml(p.status)+')</span>').join("");
       const healthLines = L.programs.map(p => '<span class="module-line">'+escapeHtml(p.program)+': '+escapeHtml(p.health)+'</span>').join("");
-      const newBadge = (sprintDeltaActive && L.enrolled) ? '<span class="badge new">NEW</span>' : '';
 
       tr.innerHTML =
         '<td>'+escapeHtml(L.email)+'</td>' +
-        '<td>'+newBadge+escapeHtml((L.first+" "+L.last).trim() || "—")+'</td>' +
+        '<td>'+escapeHtml((L.first+" "+L.last).trim() || "—")+'</td>' +
         '<td>'+escapeHtml(L.gender)+'</td>' +
         '<td>'+escapeHtml(L.country)+'</td>' +
         '<td>'+progCountBadge+'</td>' +
