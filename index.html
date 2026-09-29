@@ -383,7 +383,7 @@
     <section class="card" id="snapshotsSection" style="display:none">
       <div class="section-head">
         <h2>Daily snapshots</h2>
-        <span class="sub">Pick 2 or more dates to compare day-over-day change. The main dashboard above always shows the latest date — this section is just for historical comparison.</span>
+        <span class="sub">Pick a date to load its snapshot into the dashboard above. Pick 2 or more to also compare them day-over-day in the trend chart below.</span>
       </div>
       <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
         <select id="yearFilter" style="max-width:120px">
@@ -602,6 +602,8 @@
   let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
   let selectedDates = new Set();    // dates currently chosen for comparison
   const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
+  let currentFullDate = null;           // which date's FULL per-learner snapshot is currently loaded into `learners`
+  const fullSnapshotCache = new Map();  // date -> full learners array, avoids re-downloading a date already seen this session
   let lastTrendDates = null;        // for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
@@ -1021,11 +1023,23 @@
       : sorted.length + " dates selected";
   }
 
-  // drives ONLY the historical trend chart/table — the main dashboard (stat
-  // cards, charts, filters, directory) always reflects the latest full dataset,
-  // loaded separately by loadFullSnapshotForLatestDate()
+  // Drives both halves of the "Daily snapshots" section:
+  // 1) the main dashboard above (stat cards, bar chart, leaderboard, gender
+  //    chart, filters, directory) reloads to reflect the FULL snapshot of the
+  //    most recently selected date, so picking a single date (or narrowing by
+  //    year/sprint) actually changes the numbers, not just the trend chart.
+  // 2) when 2+ dates are selected, the lightweight trend chart/table below
+  //    additionally compares all of them using the small agg files.
   function loadAndRenderSelectedDates(){
     const dates = [...selectedDates].sort();
+    const focusDate = dates[dates.length - 1]; // most recent of the selected dates
+
+    if (focusDate !== currentFullDate){
+      loadFullSnapshotForDate(focusDate).catch(() => {
+        showToast("Couldn't load the full snapshot for " + focusDate + ".");
+      });
+    }
+
     Promise.all(dates.map(loadAgg)).then(payloads => {
       if (payloads.length > 1){
         lastTrendDates = dates; lastTrendPayloads = payloads;
@@ -1135,8 +1149,18 @@
 
   // fetches and merges every part file for a given date, then feeds the result
   // through the exact same pipeline a live CSV upload uses — so Executive View
-  // gets the full filterable dashboard, not just aggregate counts
+  // gets the full filterable dashboard, not just aggregate counts. Caches the
+  // merged result per date so flipping back to an already-seen date (e.g. via
+  // the sprint/date filters) is instant instead of re-downloading it.
   function loadFullSnapshotForDate(date){
+    if (fullSnapshotCache.has(date)){
+      learners = fullSnapshotCache.get(date);
+      currentFullDate = date;
+      finalizeLearnersData();
+      renderAll();
+      return Promise.resolve();
+    }
+
     const parts = datePartsMap.get(date) || 1;
     const fetches = [];
     for (let p = 1; p <= parts; p++){
@@ -1149,6 +1173,8 @@
       let merged = [];
       chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
       learners = merged;
+      fullSnapshotCache.set(date, merged);
+      currentFullDate = date;
       finalizeLearnersData();
       renderAll();
       const publishedAt = chunks[0] && chunks[0].publishedAt ? new Date(chunks[0].publishedAt) : new Date();
@@ -1171,7 +1197,6 @@
         datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
         selectedDates = new Set([availableDates[availableDates.length-1]]);
         buildDateChips();
-        loadFullSnapshotForDate(availableDates[availableDates.length-1]);
         loadAndRenderSelectedDates();
       })
       .catch(() => tryLoadLegacySnapshot());
