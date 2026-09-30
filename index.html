@@ -442,43 +442,47 @@
     </section>
 
     <section>
+      <div id="deltaModeBanner" style="display:none; margin-bottom:14px; padding:10px 14px; border-radius:8px; background:var(--activated-soft); color:var(--ink); font-size:12.5px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <span id="deltaModeBannerText"></span>
+        <button class="link-btn" id="deltaModeExitBtn" type="button">Show cumulative totals instead</button>
+      </div>
       <div class="stat-grid">
         <div class="stat-card accent">
           <button class="stat-export-btn" data-metric="enrolled" title="Export enrolled learners (CSV)">⬇</button>
-          <div class="label">Enrolled learners</div>
+          <div class="label" id="statEnrolledLabel">Enrolled learners</div>
           <div class="value num" id="statEnrolled">0</div>
           <div class="footnote" id="statEnrolledPct">matching current filters</div>
         </div>
         <div class="stat-card blue">
           <button class="stat-export-btn" data-metric="activated" title="Export activated learners (CSV)">⬇</button>
-          <div class="label">Activated</div>
+          <div class="label" id="statActivatedLabel">Activated</div>
           <div class="value num" id="statActivated">0</div>
           <div class="footnote" id="statActivatedPct">0% of enrolled</div>
         </div>
         <div class="stat-card accent">
           <button class="stat-export-btn" data-metric="paid" title="Export paid learners (CSV)">⬇</button>
-          <div class="label">Paid</div>
+          <div class="label" id="statPaidLabel">Paid</div>
           <div class="value num" id="statPaid">0</div>
           <div class="footnote" id="statPaidPct">0% of enrolled · 0% of activated</div>
         </div>
         <div class="stat-card blue">
           <button class="stat-export-btn" data-metric="graduated" title="Export graduated learners (CSV)">⬇</button>
-          <div class="label">Graduated</div>
+          <div class="label" id="statGraduatedLabel">Graduated</div>
           <div class="value num" id="statGraduated">0</div>
           <div class="footnote" id="statGraduatedPct">0% of enrolled</div>
         </div>
         <div class="stat-card warn">
           <button class="stat-export-btn" data-metric="multi" title="Export multi-program learners (CSV)">⬇</button>
-          <div class="label">Multi-program learners</div>
+          <div class="label" id="statMultiLabel">Multi-program learners</div>
           <div class="value num" id="statMulti">0</div>
-          <div class="footnote">enrolled in 2+ programs</div>
+          <div class="footnote" id="statMultiPct">enrolled in 2+ programs</div>
         </div>
       </div>
     </section>
 
     <section class="card">
       <div class="section-head">
-        <h2>Enrolled vs. Activated vs. Paid, by country</h2>
+        <h2 id="barChartTitle">Enrolled vs. Activated vs. Paid, by country</h2>
       </div>
       <div class="chart-box chart-box-md"><canvas id="barChart"></canvas></div>
       <div class="legend-note">
@@ -490,7 +494,7 @@
 
     <section class="card">
       <div class="section-head">
-        <h2>Country leaderboard</h2>
+        <h2 id="leaderboardTitle">Country leaderboard</h2>
         <div class="sort-select">
           Rank by
           <select id="rankMetric">
@@ -604,6 +608,8 @@
   const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
   let currentFullDate = null;           // which date's FULL per-learner snapshot is currently loaded into `learners`
   const fullSnapshotCache = new Map();  // date -> full learners array, avoids re-downloading a date already seen this session
+  let deltaModeActive = false;          // true when the stat cards/bar chart/leaderboard/gender chart are showing NET NEW numbers (focus minus a baseline date) rather than the running cumulative totals
+  let renderGeneration = 0;             // bumped on every renderAll() call; used to discard a stale baseline fetch if the user moves on before it resolves
   let lastTrendDates = null;        // for redrawing the trend chart on theme change
   let lastTrendPayloads = null;
   let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
@@ -902,6 +908,48 @@
     if (keys.includes(prevValue)) sel.value = prevValue;
     else sel.value = "all";
   }
+  // Returns the first day (YYYY-MM-DD) of whatever year/sprint scope is
+  // currently selected, or null if the scope is "All years" + "All sprints"
+  // (i.e. no period narrowing at all).
+  function getScopeStartDate(){
+    if (selectedSprint !== "all"){
+      const [yearPart, sKey] = selectedSprint.split("-S");
+      const sprintNum = parseInt(sKey, 10);
+      const startMonth = sprintNum === 1 ? "01" : sprintNum === 2 ? "05" : "09";
+      return yearPart + "-" + startMonth + "-01";
+    }
+    if (selectedYear !== "all") return selectedYear + "-01-01";
+    return null;
+  }
+  // Decides what the dashboard should treat as its "before" snapshot for a
+  // net-new (period) view, given whichever date is currently in focus:
+  // - if the person explicitly picked 2+ dates to compare (Cmd/Ctrl-click),
+  //   the earliest of those is the baseline;
+  // - otherwise, if a specific year or sprint is selected, the baseline is
+  //   the last published snapshot from before that period started;
+  // - otherwise (no scoping, single date) there's no baseline — the
+  //   dashboard just shows plain cumulative totals as of that date.
+  function getBaselineDate(focusDate){
+    const sortedSelected = [...selectedDates].sort();
+    if (sortedSelected.length > 1){
+      const earliest = sortedSelected[0];
+      return earliest !== focusDate ? earliest : null;
+    }
+    const scopeStart = getScopeStartDate();
+    if (!scopeStart) return null;
+    const before = availableDates.filter(d => d < scopeStart);
+    return before.length ? before[before.length - 1] : null;
+  }
+  // Net-new mode only has enough published granularity (byCountry/byProgram
+  // totals, not per-module) to diff an UNfiltered view, so it steps aside
+  // whenever a Program, Country, or Module chip is narrowing the page.
+  function hasAnyChipFilter(){
+    return filtersEnabled && (filters.programs.size > 0 || filters.countries.size > 0 || filters.course !== "all");
+  }
+  function fmtSigned(n){
+    return (n > 0 ? "+" : "") + n.toLocaleString();
+  }
+
   document.getElementById("yearFilter").addEventListener("change", (e) => {
     selectedYear = e.target.value;
     selectedSprint = "all"; // sprint list depends on year, so reset it whenever the year changes
@@ -958,6 +1006,10 @@
     const scopeLabel = (selectedYear !== "all" || selectedSprint !== "all") ? " in selection" : "";
     allRow.innerHTML = '<input type="checkbox" id="dateSelectAll" /><span>Select all'+scopeLabel+'</span>';
     panel.appendChild(allRow);
+    const hint = document.createElement("div");
+    hint.style.cssText = "padding:4px 8px 8px; font-size:11px; color:var(--muted);";
+    hint.textContent = "Click a date to view it. Hold ⌘/Ctrl and click to compare several.";
+    panel.appendChild(hint);
     const divider = document.createElement("div");
     divider.className = "date-dropdown-divider";
     panel.appendChild(divider);
@@ -981,11 +1033,27 @@
     }
 
     panel.querySelectorAll("input[data-date]").forEach(cb => {
-      cb.addEventListener("change", (e) => {
-        const date = e.target.dataset.date;
-        if (e.target.checked) selectedDates.add(date);
-        else if (selectedDates.size > 1) selectedDates.delete(date); // always keep >=1 selected
-        else e.target.checked = true; // block unchecking the last remaining date
+      // "click" (not "change") so we can read ctrlKey/metaKey — modifier keys
+      // aren't reliably available on a checkbox's "change" event.
+      cb.addEventListener("click", (e) => {
+        const date = e.currentTarget.dataset.date;
+        const compareMode = e.ctrlKey || e.metaKey; // hold Cmd/Ctrl to compare multiple dates instead of switching to just this one
+        if (e.currentTarget.checked){
+          if (compareMode){
+            selectedDates.add(date);
+          } else {
+            // plain click on a date: switch the dashboard to ONLY this date,
+            // rather than adding it alongside whatever was already checked
+            selectedDates = new Set([date]);
+            panel.querySelectorAll("input[data-date]").forEach(other => {
+              other.checked = (other.dataset.date === date);
+            });
+          }
+        } else if (selectedDates.size > 1){
+          selectedDates.delete(date); // always keep >=1 selected
+        } else {
+          e.currentTarget.checked = true; // block unchecking the last remaining date
+        }
         updateSelectAllState();
         updateDateDropdownLabel();
         loadAndRenderSelectedDates();
@@ -1566,28 +1634,118 @@
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
+
+    const myGeneration = ++renderGeneration; // lets a slower, superseded baseline fetch below detect it's stale and bail out
     const filtered = getFiltered();
-    renderStats(computeTotals(filtered));
-    renderGenderChart(computeGenderCounts(filtered));
-    renderBarChart(computeCountryAgg(filtered));
-    renderScoreboard(computeCountryAgg(filtered), true);
+    const cumulativeTotals = computeTotals(filtered);
+    const cumulativeCountryAgg = computeCountryAgg(filtered);
+    const cumulativeGenderCounts = computeGenderCounts(filtered);
+
+    // Render the plain cumulative view first so the page never sits blank
+    // while an optional baseline snapshot loads in the background.
+    deltaModeActive = false;
+    renderStats(cumulativeTotals, null);
+    renderGenderChart(cumulativeGenderCounts);
+    renderBarChart(cumulativeCountryAgg);
+    renderScoreboard(cumulativeCountryAgg, true);
     renderTable();
+    setDeltaModeBanner(null);
+
+    // Layer a "net new since <baseline>" view on top when the person has
+    // scoped to a specific sprint/year, or is explicitly comparing 2+ dates —
+    // but only when no Program/Country/Module chip is narrowing the page,
+    // since the lightweight per-date aggregates can't be diffed accurately
+    // once a chip filter is involved.
+    if (hasAnyChipFilter() || !currentFullDate) return;
+    const baselineDate = getBaselineDate(currentFullDate);
+    if (!baselineDate) return;
+
+    loadAgg(baselineDate).then(baselinePayload => {
+      if (myGeneration !== renderGeneration) return; // a newer render has since superseded this one
+
+      const b = baselinePayload.totals || {};
+      const deltaTotals = {
+        enrolled: cumulativeTotals.enrolled - (b.enrolled || 0),
+        activated: cumulativeTotals.activated - (b.activated || 0),
+        paid: cumulativeTotals.paid - (b.paid || 0),
+        graduated: cumulativeTotals.graduated - (b.graduated || 0),
+        multi: cumulativeTotals.multi - (b.multi || 0)
+      };
+      deltaModeActive = true;
+      renderStats(deltaTotals, { baselineDate, focusDate: currentFullDate, cumulativeEnrolled: cumulativeTotals.enrolled });
+      renderBarChart(deltaMapFromByCountry(baselinePayload.byCountry, cumulativeCountryAgg));
+      renderScoreboard(deltaMapFromByCountry(baselinePayload.byCountry, cumulativeCountryAgg), true);
+      renderGenderChart(deltaMapFromGender(baselinePayload.gender, cumulativeGenderCounts));
+      setDeltaModeBanner({ baselineDate, focusDate: currentFullDate });
+    }).catch(() => {
+      showToast("Couldn't load the baseline snapshot for this period comparison — showing cumulative totals instead.");
+    });
   }
+
+  // country/gender deltas: subtract the baseline's per-key counts from the
+  // current (focus) per-key counts, treating a key missing from the baseline
+  // (e.g. a country with no published data yet back then) as zero
+  function deltaMapFromByCountry(baselineByCountry, focusMap){
+    const result = new Map();
+    focusMap.forEach((v, key) => {
+      const b = (baselineByCountry && baselineByCountry[key]) || { enrolled: 0, activated: 0, paid: 0 };
+      result.set(key, { enrolled: v.enrolled - b.enrolled, activated: v.activated - b.activated, paid: v.paid - b.paid });
+    });
+    return result;
+  }
+  function deltaMapFromGender(baselineGender, focusMap){
+    const result = new Map();
+    focusMap.forEach((v, key) => {
+      const b = (baselineGender && baselineGender[key]) || 0;
+      result.set(key, v - b);
+    });
+    return result;
+  }
+
+  function setDeltaModeBanner(info){
+    const banner = document.getElementById("deltaModeBanner");
+    const barTitle = document.getElementById("barChartTitle");
+    const boardTitle = document.getElementById("leaderboardTitle");
+    if (!info){
+      banner.style.display = "none";
+      barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
+      boardTitle.textContent = "Country leaderboard";
+      return;
+    }
+    document.getElementById("deltaModeBannerText").textContent =
+      "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
+    banner.style.display = "flex";
+    barTitle.textContent = "Net new Enrolled vs. Activated vs. Paid, by country";
+    boardTitle.textContent = "Country leaderboard (net new)";
+  }
+  document.getElementById("deltaModeExitBtn").addEventListener("click", () => {
+    selectedYear = "all";
+    selectedSprint = "all";
+    document.getElementById("yearFilter").value = "all";
+    document.getElementById("sprintFilter").value = "all";
+    if (currentFullDate) selectedDates = new Set([currentFullDate]);
+    buildDateChips();
+    renderAll();
+    showToast("Showing cumulative totals as of " + (currentFullDate || "the latest date") + ".");
+  });
 
   // Public/summary mode: only aggregate counts are available (no per-learner
   // rows), so filters and the learner directory are hidden — there's nothing
-  // for them to operate on.
+  // for them to operate on. Net-new mode needs a full per-learner snapshot
+  // to diff against, so it never applies here.
   function renderPublicSummary(payload){
     viewMode = "summary";
     publishedAgg = payload;
     dashboardBody.style.display = "block";
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
-    renderStats(payload.totals);
+    deltaModeActive = false;
+    renderStats(payload.totals, null);
     renderGenderChart(new Map(Object.entries(payload.gender)));
     const countryAgg = new Map(Object.entries(payload.byCountry));
     renderBarChart(countryAgg);
     renderScoreboard(countryAgg, false);
+    setDeltaModeBanner(null);
     updateEmptyState();
   }
 
@@ -1601,21 +1759,41 @@
     };
   }
 
-  function renderStats(totals){
+  function renderStats(totals, meta){
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
-    document.getElementById("statEnrolled").textContent = enrolled.toLocaleString();
+    const inDeltaMode = !!(meta && meta.baselineDate);
+
+    document.getElementById("statEnrolledLabel").textContent = inDeltaMode ? "New enrollments" : "Enrolled learners";
+    document.getElementById("statEnrolled").textContent = inDeltaMode ? fmtSigned(enrolled) : enrolled.toLocaleString();
     const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
-    document.getElementById("statEnrolledPct").textContent = anyFilterActive
-      ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
-      : "matching current filters";
-    document.getElementById("statActivated").textContent = activated.toLocaleString();
-    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
-    document.getElementById("statPaid").textContent = paid.toLocaleString();
-    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
-    document.getElementById("statGraduated").textContent = (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
-    document.getElementById("statMulti").textContent = multi.toLocaleString();
+    document.getElementById("statEnrolledPct").textContent = inDeltaMode
+      ? "since " + meta.baselineDate + " · total now " + meta.cumulativeEnrolled.toLocaleString()
+      : anyFilterActive
+        ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
+        : "matching current filters";
+
+    document.getElementById("statActivatedLabel").textContent = inDeltaMode ? "New activations" : "Activated";
+    document.getElementById("statActivated").textContent = inDeltaMode ? fmtSigned(activated) : activated.toLocaleString();
+    document.getElementById("statActivatedPct").textContent = inDeltaMode
+      ? pct(activated, enrolled) + "% of new enrollees"
+      : pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
+
+    document.getElementById("statPaidLabel").textContent = inDeltaMode ? "New paid" : "Paid";
+    document.getElementById("statPaid").textContent = inDeltaMode ? fmtSigned(paid) : paid.toLocaleString();
+    document.getElementById("statPaidPct").textContent = inDeltaMode
+      ? pct(paid, enrolled) + "% of new enrollees"
+      : pct(paid,enrolled) + "% of enrolled";
+
+    document.getElementById("statGraduatedLabel").textContent = inDeltaMode ? "New graduates" : "Graduated";
+    document.getElementById("statGraduated").textContent = inDeltaMode ? fmtSigned(graduated||0) : (graduated||0).toLocaleString();
+    document.getElementById("statGraduatedPct").textContent = inDeltaMode
+      ? "in this period"
+      : pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
+
+    document.getElementById("statMultiLabel").textContent = inDeltaMode ? "New multi-program" : "Multi-program learners";
+    document.getElementById("statMulti").textContent = inDeltaMode ? fmtSigned(multi) : multi.toLocaleString();
+    document.getElementById("statMultiPct").textContent = inDeltaMode ? "became multi-program in this period" : "enrolled in 2+ programs";
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
@@ -1698,8 +1876,12 @@
   }
 
   function renderBarChart(groups){
-    const labels = [...groups.keys()].filter(k => groups.get(k).enrolled > 0)
-      .sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
+    // In cumulative mode, a country with literally nothing recorded is just
+    // noise — hide it. In net-new mode, 0 is meaningful information (no
+    // growth there this period), so every country stays visible.
+    const labels = deltaModeActive
+      ? [...groups.keys()].sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled)
+      : [...groups.keys()].filter(k => groups.get(k).enrolled > 0).sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
 
     const c = chartColors();
     if (barChartRef) barChartRef.destroy();
@@ -1721,7 +1903,10 @@
           datalabels: {
             anchor: "end", align: "end", offset: 2,
             color: c.text, font: { size: 9.5, weight:"600" },
-            formatter: (value) => value > 0 ? value.toLocaleString() : ""
+            formatter: (value) => {
+              if (deltaModeActive) return value !== 0 ? fmtSigned(value) : "0";
+              return value > 0 ? value.toLocaleString() : "";
+            }
           }
         },
         scales: {
