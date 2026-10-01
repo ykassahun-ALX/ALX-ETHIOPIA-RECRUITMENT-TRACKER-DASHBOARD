@@ -1106,6 +1106,10 @@
       loadFullSnapshotForDate(focusDate).catch(() => {
         showToast("Couldn't load the full snapshot for " + focusDate + ".");
       });
+    } else if (currentFullDate){
+      // Same date already loaded, but the year/sprint scope or compared-dates
+      // selection may have changed — re-run so the net-new baseline updates.
+      renderAll();
     }
 
     Promise.all(dates.map(loadAgg)).then(payloads => {
@@ -1923,17 +1927,23 @@
       enrolled: v.enrolled, activated: v.activated, paid: v.paid,
       convEnrolled: v.enrolled ? v.paid/v.enrolled : 0,
       convActivated: v.paid ? v.activated/v.paid : 0
-    })).filter(c => c.enrolled > 0);
+    }));
+    // In cumulative mode, hide countries with literally nothing recorded —
+    // pure noise. In net-new mode, zero (or even negative) growth is itself
+    // meaningful, so every country with a hub presence stays listed.
+    list = deltaModeActive ? list : list.filter(c => c.enrolled > 0);
 
     const metric = document.getElementById("rankMetric").value;
     list.sort((a,b) => b[metric] - a[metric]);
 
-    const maxMetric = Math.max(...list.map(c=>c[metric]), 0.0001);
+    const maxMetric = Math.max(...list.map(c=>Math.abs(c[metric])), 0.0001);
     const board = document.getElementById("scoreboard");
+    const headEnrolled = deltaModeActive ? "New enrolled" : "Enrolled";
+    const headPaid = deltaModeActive ? "New paid" : "Paid";
     board.innerHTML =
       '<div class="lane-head">' +
         '<span></span><span>Country</span><span></span>' +
-        '<div class="head-numbers"><span>Enrolled</span><span>Paid</span><span>Paid ÷ Enrolled</span><span>Activated ÷ Paid</span></div>' +
+        '<div class="head-numbers"><span>'+headEnrolled+'</span><span>'+headPaid+'</span><span>Paid ÷ Enrolled</span><span>Activated ÷ Paid</span></div>' +
         '<span></span>' +
       '</div>';
 
@@ -1941,13 +1951,15 @@
       const lane = document.createElement("div");
       lane.className = "lane";
       // bar length always matches whatever's selected in "Rank by", so the
-      // visual order lines up with the row order regardless of metric
-      const barWidth = (c[metric] / maxMetric) * 100;
+      // visual order lines up with the row order regardless of metric. A
+      // negative net-new value (rare, e.g. data corrections) just renders as
+      // an empty bar rather than a negative width.
+      const barWidth = Math.max(0, (c[metric] / maxMetric) * 100);
       let trackInner;
       if (metric === "enrolled"){
         // the one case with enough shared scale to show the activated/paid funnel inside the bar
-        const actWidth = c.enrolled ? (c.activated / c.enrolled) * 100 : 0;
-        const paidWidth = c.enrolled ? (c.paid / c.enrolled) * 100 : 0;
+        const actWidth = c.enrolled ? Math.max(0, (c.activated / c.enrolled) * 100) : 0;
+        const paidWidth = c.enrolled ? Math.max(0, (c.paid / c.enrolled) * 100) : 0;
         trackInner = '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
                      '<div class="seg-paid" style="width:'+paidWidth.toFixed(1)+'%"></div>';
       } else {
@@ -1956,6 +1968,7 @@
       const checkboxHtml = interactive
         ? '<div class="lane-checkbox"><input type="checkbox" title="Add to country filter" '+(filters.countries.has(c.country)?"checked":"")+' /></div>'
         : '<div class="lane-checkbox"></div>';
+      const fmtCount = (n) => deltaModeActive ? fmtSigned(n) : n.toLocaleString();
 
       lane.innerHTML =
         '<div class="rank">'+(i+1)+'</div>' +
@@ -1964,8 +1977,8 @@
           trackInner +
         '</div></div>' +
         '<div class="lane-numbers">' +
-          '<span><b>'+c.enrolled.toLocaleString()+'</b></span>' +
-          '<span><b>'+c.paid.toLocaleString()+'</b></span>' +
+          '<span><b>'+fmtCount(c.enrolled)+'</b></span>' +
+          '<span><b>'+fmtCount(c.paid)+'</b></span>' +
           '<span><b>'+(c.convEnrolled*100).toFixed(1)+'%</b></span>' +
           '<span><b>'+(c.convActivated*100).toFixed(1)+'%</b></span>' +
         '</div>' +
