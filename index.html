@@ -69,7 +69,6 @@
   }
   .num{ font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
 
-  /* ---------- Layout shells ---------- */
   .wrap{ max-width: 1280px; margin: 0 auto; padding: 0 24px 64px; }
   header.top{
     background: var(--header-bg);
@@ -122,7 +121,6 @@
   .section-head h2{ font-size:16px; }
   .section-head .sub{ color: var(--muted); font-size:12.5px; }
 
-  /* ---------- Upload ---------- */
   #uploadCard{ margin-top: -28px; position:relative; z-index:2; }
   .dropzone{
     border: 1.5px dashed #B9C7BE;
@@ -146,7 +144,6 @@
   .spinner.show{ display:inline-block; }
   @keyframes spin{ to{ transform: rotate(360deg);} }
 
-  /* ---------- Filters ---------- */
   .filter-grid{ display:grid; grid-template-columns: 1.3fr 1fr 1fr; gap:18px; }
   .filter-grid.no-module{ grid-template-columns: 1fr 1.3fr; }
   @media (max-width: 900px){ .filter-grid{ grid-template-columns: 1fr; } }
@@ -194,7 +191,6 @@
   .filters-toggle input{ margin:0; accent-color: var(--accent); width:15px; height:15px; }
   .filters-toggle.is-off{ color: var(--warn); font-weight:600; }
 
-  /* ---------- Stat cards ---------- */
   .stat-grid{ display:grid; grid-template-columns: repeat(5, 1fr); gap:16px; }
   @media (max-width: 1100px){ .stat-grid{ grid-template-columns: repeat(3,1fr);} }
   @media (max-width: 640px){ .stat-grid{ grid-template-columns: repeat(2,1fr);} }
@@ -213,7 +209,6 @@
   }
   .stat-export-btn:hover{ background:var(--accent); border-color:var(--accent); color:var(--accent-contrast); }
 
-  /* ---------- Charts row ---------- */
   .charts-row{ display:grid; grid-template-columns: 1fr 1.6fr; gap:18px; }
   @media (max-width: 900px){ .charts-row{ grid-template-columns: 1fr; } }
   .gender-card{ max-width: 520px; }
@@ -246,7 +241,6 @@
   .legend-note{ font-size:11.5px; color:var(--muted); margin-top:10px; display:flex; gap:14px; flex-wrap:wrap; }
   .legend-dot{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:middle; }
 
-  /* ---------- Scoreboard (signature element) ---------- */
   .sort-select{ display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); }
   .sort-select select{ width:auto; padding:5px 8px; }
   .lane{ display:grid; grid-template-columns: 30px 120px 1fr 240px 26px; align-items:center; gap:14px; padding:10px 0; border-bottom: 1px solid var(--border); }
@@ -270,7 +264,6 @@
   .lane-head span{ font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; }
   .lane-head .head-numbers{ display:grid; grid-template-columns: repeat(4,1fr); gap:8px; text-align:right; }
 
-  /* ---------- Directory table ---------- */
   .table-toolbar{ display:flex; gap:12px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
   .table-toolbar input[type=text]{ max-width:280px; }
   .btn{
@@ -484,6 +477,7 @@
     <section class="card">
       <div class="section-head">
         <h2 id="barChartTitle">Enrolled vs. Activated vs. Paid, by country</h2>
+        <span class="sub" id="barChartCumulativeNote" style="display:none"></span>
       </div>
       <div class="chart-box chart-box-md"><canvas id="barChart"></canvas></div>
       <div class="legend-note">
@@ -496,6 +490,7 @@
     <section class="card">
       <div class="section-head">
         <h2 id="leaderboardTitle">Country leaderboard</h2>
+        <span class="sub" id="leaderboardCumulativeNote" style="display:none"></span>
         <div class="sort-select">
           Rank by
           <select id="rankMetric">
@@ -591,11 +586,10 @@
 (function(){
   "use strict";
 
-  // ---------------- State ----------------
-  let learners = [];          // full array of learner objects
-  let allPrograms = [];        // sorted list of program names
-  let allCountries = [];       // sorted list of country names (by enrollment)
-  let allCourses = [];         // sorted list of "Program — Course" strings
+  let learners = [];
+  let allPrograms = [];
+  let allCountries = [];
+  let allCourses = [];
   const filters = { programs: new Set(), countries: new Set(), course: "all", search: "" };
   let filtersEnabled = true;
   let lastTotals = null;
@@ -604,29 +598,24 @@
   let genderChartRef = null;
   let barChartRef = null;
   let trendChartRef = null;
-  let availableDates = [];          // all published snapshot dates, ascending, e.g. "2026-08-03"
-  let selectedDates = new Set();    // dates currently chosen for comparison
-  const snapshotsCache = new Map(); // date -> payload, avoids re-fetching
-  let currentFullDate = null;           // which date's FULL per-learner snapshot is currently loaded into `learners`
-  const fullSnapshotCache = new Map();  // date -> full learners array, avoids re-downloading a date already seen this session
-  let deltaModeActive = false;          // true when the stat cards are showing NET NEW numbers (focus minus a baseline date) rather than the running cumulative totals
-  let countryDeltaActive = false;       // true when the bar chart/leaderboard specifically can also safely show net-new per-country numbers (see renderAll for when this differs from deltaModeActive)
-  let renderGeneration = 0;             // bumped on every renderAll() call; used to discard a stale baseline fetch if the user moves on before it resolves
-  let lastTrendDates = null;        // for redrawing the trend chart on theme change
+  let availableDates = [];
+  let selectedDates = new Set();
+  const snapshotsCache = new Map();
+  let currentFullDate = null;
+  const fullSnapshotCache = new Map();
+  let deltaModeActive = false;
+  let countryDeltaActive = false;
+  let renderGeneration = 0;
+  let lastTrendDates = null;
   let lastTrendPayloads = null;
-  let theme = "light"; // kept in memory only (no localStorage inside the artifact preview)
-  let viewMode = "empty";     // "empty" | "full" (admin's live CSV) | "summary" (published aggregate)
-  let publishedAgg = null;    // holds the aggregate payload when viewMode === "summary"
+  let theme = "light";
+  let viewMode = "empty";
+  let publishedAgg = null;
   let isAdmin = false;
-  // NOTE FOR WHOEVER DEPLOYS THIS: this is a soft, cosmetic gate only — anyone can
-  // read this password straight out of the page source. It just hides the upload
-  // controls from casual visitors; it is not real access control. Change it before
-  // sharing the link.
   const ADMIN_PASSWORD = "alx-admin-2026";
-  let lastUpdated = null;       // Date object
-  let lastUpdatedSource = null; // "published" | "local"
+  let lastUpdated = null;
+  let lastUpdatedSource = null;
 
-  // ---------------- DOM refs ----------------
   const dropzone = document.getElementById("dropzone");
   const fileInput = document.getElementById("fileInput");
   const fileStatus = document.getElementById("fileStatus");
@@ -643,7 +632,6 @@
   const viewExecutiveBtn = document.getElementById("viewExecutiveBtn");
   const viewAdminBtn = document.getElementById("viewAdminBtn");
 
-  // reads the live CSS custom property values so Chart.js matches the current theme
   function cssVar(name){
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
@@ -659,7 +647,6 @@
     document.documentElement.setAttribute("data-theme", theme);
     themeIcon.textContent = theme === "dark" ? "☀️" : "🌙";
     themeLabel.textContent = theme === "dark" ? "Light" : "Dark";
-    // charts bake colors into their config at creation time, so redraw them on theme change
     if (viewMode === "full"){
       const filtered = getFiltered();
       renderGenderChart(computeGenderCounts(filtered));
@@ -672,7 +659,6 @@
   }
   themeToggle.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
 
-  // ---------------- Small UI helpers (no window.prompt/alert — sandboxed preview iframes block those silently) ----------------
   const modalOverlay = document.getElementById("modalOverlay");
   const modalTitle = document.getElementById("modalTitle");
   const modalBody = document.getElementById("modalBody");
@@ -721,7 +707,6 @@
     modalConfirm.onclick = attempt;
   }
 
-  // ---------------- Admin gate ----------------
   function updateEmptyState(){
     const hasData = learners.length > 0 || viewMode === "summary";
     emptyStateAdmin.style.display = (!hasData && isAdmin) ? "block" : "none";
@@ -741,34 +726,9 @@
     if (!isAdmin) openAdminPasswordModal();
   });
 
-  // ---------------- Publish / load shareable, dated snapshots ----------------
-  // Static hosting (like GitHub Pages) has no database, so the only way for OTHER
-  // people opening the link to see the same data — without uploading the CSV
-  // themselves — is for the admin to publish files that sit next to this HTML
-  // file.
-  //
-  // NOTE ON PRIVACY: by explicit choice, these snapshots contain FULL per-learner
-  // detail — names, emails, activation/payment status — not just aggregate counts.
-  // That means anyone with the link can see individual learner records, not just
-  // totals. That's a deliberate tradeoff made in favor of everyone (not just
-  // admins) being able to use the filters and search the directory. If that
-  // changes, only the payload built below needs to go back to aggregate-only.
-  //
-  // Because full per-learner data for tens of thousands of learners is well
-  // over GitHub's 25MB drag-and-drop upload limit, each day's publish is split
-  // into multiple part files (data-YYYY-MM-DD-partN.json) sized safely under
-  // that limit. A small snapshots-index.json records, per date, how many parts
-  // exist, so the page knows how many files to fetch and stitch back together.
-  // A separate, tiny agg-YYYY-MM-DD.json (totals/gender/country only) is also
-  // published per day — that one is what powers the lightweight multi-day trend
-  // comparison, without needing to download every historical day's full data.
-  const CHUNK_TARGET_BYTES = 15 * 1024 * 1024; // ~15MB per part, safely under GitHub's 25MB cap
-  let datePartsMap = new Map(); // date -> number of parts published for that date
+  const CHUNK_TARGET_BYTES = 15 * 1024 * 1024;
+  let datePartsMap = new Map();
 
-  // GitHub Pages' CDN can keep serving a stale copy of a file for several
-  // minutes after a new commit, even though cache:"no-store" already stops the
-  // browser's OWN cache from being the problem. Appending a changing query
-  // string forces every fetch to be treated as a new, uncached URL.
   function noCacheUrl(url){
     return url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
   }
@@ -786,8 +746,6 @@
     URL.revokeObjectURL(url);
     return blob.size;
   }
-  // downloads files one at a time with a short gap — browsers can silently
-  // block several rapid-fire downloads triggered in the same tick
   function downloadSequence(items, onDone){
     let i = 0; let totalBytes = 0;
     function next(){
@@ -807,7 +765,6 @@
     const publishedAt = new Date();
     const dateStr = todayDateString();
 
-    // chunk the full learner array so no single file exceeds GitHub's upload limit
     const fullSize = JSON.stringify(learners).length;
     const numParts = Math.max(1, Math.ceil(fullSize / CHUNK_TARGET_BYTES));
     const chunkLen = Math.ceil(learners.length / numParts);
@@ -819,7 +776,6 @@
         obj: { date: dateStr, publishedAt: publishedAt.toISOString(), part: p+1, parts: numParts, learners: slice }
       });
     }
-    // small aggregate file, used only for the historical trend chart
     files.push({
       filename: "agg-" + dateStr + ".json",
       obj: {
@@ -836,7 +792,7 @@
       .catch(() => ({ dates: [] }))
       .then(indexPayload => {
         const dateMap = new Map((Array.isArray(indexPayload.dates) ? indexPayload.dates : [])
-          .map(d => typeof d === "string" ? [d, 1] : [d.date, d.parts])); // tolerate old flat-string format
+          .map(d => typeof d === "string" ? [d, 1] : [d.date, d.parts]));
         dateMap.set(dateStr, numParts);
         const sortedDates = [...dateMap.keys()].sort().map(date => ({ date, parts: dateMap.get(date) }));
         files.push({ filename: "snapshots-index.json", obj: { dates: sortedDates } });
@@ -852,7 +808,6 @@
       });
   });
 
-  // ---- lightweight aggregate loader (for the historical trend chart only) ----
   function loadAgg(date){
     if (snapshotsCache.has(date)) return Promise.resolve(snapshotsCache.get(date));
     return fetch(noCacheUrl("agg-" + date + ".json"), { cache: "no-store" })
@@ -860,7 +815,6 @@
       .then(payload => { snapshotsCache.set(date, payload); return payload; });
   }
 
-  // ---------------- Sprints (ALX calendar: Jan-Apr, May-Aug, Sep-Dec) ----------------
   let selectedYear = "all";
   let selectedSprint = "all";
   function getSprintInfo(dateStr){
@@ -869,10 +823,6 @@
     if (month <= 4){ sprintNum = 1; range = "Jan–Apr"; }
     else if (month <= 8){ sprintNum = 2; range = "May–Aug"; }
     else { sprintNum = 3; range = "Sep–Dec"; }
-    // key always includes the year so sprints from different years never merge.
-    // The label drops the year when a specific year is already chosen via the
-    // year filter (redundant otherwise); it's added back only under "All years",
-    // where two different years could otherwise show an identical "Sprint 2: May–Aug".
     const shortLabel = "Sprint " + sprintNum + ": " + range;
     const longLabel = year + " · " + shortLabel;
     return { year, sprintNum, key: year + "-S" + sprintNum, shortLabel, longLabel };
@@ -910,9 +860,6 @@
     if (keys.includes(prevValue)) sel.value = prevValue;
     else sel.value = "all";
   }
-  // Returns the first day (YYYY-MM-DD) of whatever year/sprint scope is
-  // currently selected, or null if the scope is "All years" + "All sprints"
-  // (i.e. no period narrowing at all).
   function getScopeStartDate(){
     if (selectedSprint !== "all"){
       const [yearPart, sKey] = selectedSprint.split("-S");
@@ -923,14 +870,6 @@
     if (selectedYear !== "all") return selectedYear + "-01-01";
     return null;
   }
-  // Decides what the dashboard should treat as its "before" snapshot for a
-  // net-new (period) view, given whichever date is currently in focus:
-  // - if the person explicitly picked 2+ dates to compare (Cmd/Ctrl-click),
-  //   the earliest of those is the baseline;
-  // - otherwise, if a specific year or sprint is selected, the baseline is
-  //   the last published snapshot from before that period started;
-  // - otherwise (no scoping, single date) there's no baseline — the
-  //   dashboard just shows plain cumulative totals as of that date.
   function getBaselineDate(focusDate){
     const sortedSelected = [...selectedDates].sort();
     if (sortedSelected.length > 1){
@@ -942,19 +881,16 @@
     const before = availableDates.filter(d => d < scopeStart);
     return before.length ? before[before.length - 1] : null;
   }
-  // Net-new mode only has enough published granularity (byCountry/byProgram
-  // totals, not per-module) to diff an UNfiltered view, so it steps aside
-  // whenever a Program, Country, or Module chip is narrowing the page.
-  function hasAnyChipFilter(){
-    return filtersEnabled && (filters.programs.size > 0 || filters.countries.size > 0 || filters.course !== "all");
-  }
   function fmtSigned(n){
-    return n.toLocaleString(); // negative values still show a minus sign naturally; positive values show plain, no "+"
+    return n.toLocaleString();
+  }
+  function hasOwn(obj, key){
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
   }
 
   document.getElementById("yearFilter").addEventListener("change", (e) => {
     selectedYear = e.target.value;
-    selectedSprint = "all"; // sprint list depends on year, so reset it whenever the year changes
+    selectedSprint = "all";
     const inScope = availableDates.filter(d => selectedYear === "all" || String(getSprintInfo(d).year) === String(selectedYear));
     selectedDates = new Set([...selectedDates].filter(d => inScope.includes(d)));
     if (!selectedDates.size && inScope.length) selectedDates = new Set([inScope[inScope.length-1]]);
@@ -963,7 +899,6 @@
   });
   document.getElementById("sprintFilter").addEventListener("change", (e) => {
     selectedSprint = e.target.value;
-    // drop any selected dates that fall outside the newly chosen year/sprint
     const inScope = availableDates.filter(d => {
       const s = getSprintInfo(d);
       if (selectedYear !== "all" && String(s.year) !== String(selectedYear)) return false;
@@ -975,8 +910,6 @@
     loadAndRenderSelectedDates();
   });
 
-  // outside-click-to-close is wired once here, not inside buildDateChips (which can
-  // run repeatedly whenever the sprint filter changes) — avoids stacking duplicate listeners
   document.addEventListener("click", (e) => {
     const panel = document.getElementById("dateDropdownPanel");
     if (panel && !document.getElementById("dateDropdown").contains(e.target)) panel.style.display = "none";
@@ -1016,7 +949,6 @@
     divider.className = "date-dropdown-divider";
     panel.appendChild(divider);
 
-    // most recent first — that's what people will want to find as the list grows
     [...visibleDates].reverse().forEach(date => {
       const row = document.createElement("label");
       row.className = "date-dropdown-row" + (date === latestOverall ? " latest" : "");
@@ -1039,28 +971,23 @@
       const date = row.dataset.date;
       const checkbox = row.querySelector("input[data-date]");
 
-      // clicking the little checkbox square itself behaves like an ordinary
-      // checkbox: it toggles that date in/out of the comparison selection
       checkbox.addEventListener("click", (e) => {
-        e.stopPropagation(); // don't also trigger the row's "switch to just this date" handler below
+        e.stopPropagation();
         if (e.currentTarget.checked){
           selectedDates.add(date);
         } else if (selectedDates.size > 1){
-          selectedDates.delete(date); // always keep >=1 selected
+          selectedDates.delete(date);
         } else {
-          e.currentTarget.checked = true; // block unchecking the last remaining date
+          e.currentTarget.checked = true;
         }
         updateSelectAllState();
         updateDateDropdownLabel();
         loadAndRenderSelectedDates();
       });
 
-      // clicking anywhere else on the row (the date text, the "Latest" tag,
-      // the row's padding) switches the dashboard to ONLY this date — no
-      // need to first uncheck whatever was previously selected
       row.addEventListener("click", (e) => {
-        if (e.target === checkbox) return; // already handled above
-        e.preventDefault(); // stop the browser's native label->checkbox toggle; we set state ourselves
+        if (e.target === checkbox) return;
+        e.preventDefault();
         selectedDates = new Set([date]);
         panel.querySelectorAll("input[data-date]").forEach(cb => { cb.checked = (cb.dataset.date === date); });
         updateSelectAllState();
@@ -1100,24 +1027,15 @@
       : sorted.length + " dates selected";
   }
 
-  // Drives both halves of the "Daily snapshots" section:
-  // 1) the main dashboard above (stat cards, bar chart, leaderboard, gender
-  //    chart, filters, directory) reloads to reflect the FULL snapshot of the
-  //    most recently selected date, so picking a single date (or narrowing by
-  //    year/sprint) actually changes the numbers, not just the trend chart.
-  // 2) when 2+ dates are selected, the lightweight trend chart/table below
-  //    additionally compares all of them using the small agg files.
   function loadAndRenderSelectedDates(){
     const dates = [...selectedDates].sort();
-    const focusDate = dates[dates.length - 1]; // most recent of the selected dates
+    const focusDate = dates[dates.length - 1];
 
     if (focusDate !== currentFullDate){
       loadFullSnapshotForDate(focusDate).catch(() => {
         showToast("Couldn't load the full snapshot for " + focusDate + ".");
       });
     } else if (currentFullDate){
-      // Same date already loaded, but the year/sprint scope or compared-dates
-      // selection may have changed — re-run so the net-new baseline updates.
       renderAll();
     }
 
@@ -1135,9 +1053,6 @@
     });
   }
 
-  // country and program breakdowns are stored separately in each agg file, so
-  // combining both filters at once can't be derived accurately from aggregates
-  // alone — country takes priority when both are active, and a note explains it
   function filteredTrendTotals(payload){
     const hasCountry = filtersEnabled && filters.countries.size > 0;
     const hasProgram = filtersEnabled && filters.programs.size > 0;
@@ -1228,11 +1143,6 @@
     });
   }
 
-  // fetches and merges every part file for a given date, then feeds the result
-  // through the exact same pipeline a live CSV upload uses — so Executive View
-  // gets the full filterable dashboard, not just aggregate counts. Caches the
-  // merged result per date so flipping back to an already-seen date (e.g. via
-  // the sprint/date filters) is instant instead of re-downloading it.
   function loadFullSnapshotForDate(date){
     if (fullSnapshotCache.has(date)){
       learners = fullSnapshotCache.get(date);
@@ -1264,15 +1174,12 @@
     });
   }
 
-  // tries to load the published snapshot history sitting next to this page.
-  // Silently does nothing if it's missing (first-ever run) or unreachable (e.g.
-  // opened as a local file, or inside this preview sandbox, where fetch is blocked).
   function loadSnapshotsIndex(){
     fetch(noCacheUrl("snapshots-index.json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("no index"); return res.json(); })
       .then(indexPayload => {
         if (!indexPayload || !Array.isArray(indexPayload.dates) || !indexPayload.dates.length) throw new Error("empty index");
-        const entries = indexPayload.dates.map(d => typeof d === "string" ? { date: d, parts: 1 } : d); // tolerate old flat-string format
+        const entries = indexPayload.dates.map(d => typeof d === "string" ? { date: d, parts: 1 } : d);
         entries.sort((a,b) => a.date < b.date ? -1 : 1);
         availableDates = entries.map(e => e.date);
         datePartsMap = new Map(entries.map(e => [e.date, e.parts]));
@@ -1283,7 +1190,6 @@
       .catch(() => tryLoadLegacySnapshot());
   }
 
-  // backward compatibility with the older aggregate-only single-file format
   function tryLoadLegacySnapshot(){
     fetch(noCacheUrl("data.json"), { cache: "no-store" })
       .then(res => { if (!res.ok) throw new Error("no snapshot"); return res.json(); })
@@ -1294,7 +1200,7 @@
         document.getElementById("snapshotsSection").style.display = "none";
         renderPublicSummary(payload);
       })
-      .catch(() => { /* no snapshot published yet — fine, especially in this preview */ });
+      .catch(() => { });
   }
 
   dropzone.addEventListener("click", () => fileInput.click());
@@ -1313,9 +1219,6 @@
     fileStatus.classList.remove("ok");
     spinner.classList.add("show");
     fileStatusText.textContent = "Reading " + file.name + " …";
-    // yield a frame first so the "Reading…" message actually paints before the
-    // (synchronous) parse work below starts — no Web Worker, since sandboxed
-    // artifact iframes can silently block worker creation.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const reader = new FileReader();
       reader.onload = function(e){
@@ -1332,9 +1235,6 @@
         }
         fileStatusText.textContent = "Aggregating " + parsed.data.length.toLocaleString() + " rows…";
         requestAnimationFrame(() => requestAnimationFrame(() => {
-          // reset filters from any previously loaded file — otherwise, e.g., a
-          // country selected while testing an earlier (smaller) CSV silently
-          // keeps filtering out everything not in that old selection
           filters.programs.clear(); filters.countries.clear(); filters.course = "all"; filters.search = "";
           document.getElementById("searchBox").value = "";
           document.getElementById("courseFilter").value = "all";
@@ -1358,20 +1258,11 @@
     }));
   }
 
-  // ---------------- Aggregation ----------------
-  // The program only operates in these countries — anything else in the CSV
-  // (typos, stray sign-ups, test data, learners outside the target markets)
-  // gets grouped into "Other" instead of cluttering the country picker with
-  // every country that happens to appear in a free-text field.
   const HUB_COUNTRIES = ["Nigeria","Kenya","Ghana","Ethiopia","South Africa","Egypt","Rwanda","Morocco"];
   function normalizeCountry(raw){
     const c = (raw || "").trim();
     return HUB_COUNTRIES.includes(c) ? c : "Other";
   }
-  // Same idea as HUB_COUNTRIES: these are the only real programs offered.
-  // Anything else in the CSV's "Program name" column is actually a stray
-  // module/course name that leaked into that field, so it gets bucketed
-  // into "Other" instead of cluttering the program filter.
   const HUB_PROGRAMS = [
     "Data Analytics", "Data Science", "AI Career Essentials", "Virtual Assistant",
     "Freelancer Academy", "Content Creation", "Founder Academy", "Graphic Design"
@@ -1400,13 +1291,10 @@
           activated: false,
           paid: false,
           graduated: false,
-          programs: new Map() // programName -> {seq, name, status, health}
+          programs: new Map()
         };
         map.set(email, L);
       }
-      // two different export formats have shown up in practice: a detailed
-      // course-level export, and a simpler program-level one — check both
-      // column names so either works without the admin needing to know which.
       if (row["Is enrollment activated"] === "Yes" || row["Is program activated"] === "Yes") L.activated = true;
       if (row["Payment plan status"] === "ACTIVE") L.paid = true;
       if (row["Learner health classification status"] === "Graduated" || row["Is program graduated"] === "Yes") L.graduated = true;
@@ -1428,7 +1316,6 @@
       }
     }
 
-    // finalize into plain arrays for fast repeated filtering
     learners = [];
     for (const L of map.values()){
       const progArr = [];
@@ -1447,8 +1334,6 @@
     finalizeLearnersData();
   }
 
-  // (re)computes program/country/course option lists from whatever is currently in
-  // `learners` — used after a fresh CSV parse AND after loading a published snapshot
   function finalizeLearnersData(){
     const progCount = new Map();
     const countryCount = new Map();
@@ -1467,7 +1352,6 @@
     buildFilterUI();
   }
 
-  // ---------------- Filter UI construction (only rebuilt on new upload) ----------------
   function buildFilterUI(){
     const progWrap = document.getElementById("programChips");
     progWrap.innerHTML = "";
@@ -1484,7 +1368,6 @@
       opt.value = c; opt.textContent = c;
       courseSelect.appendChild(opt);
     });
-    // this file format has no course/module granularity — nothing to filter by
     const hasModules = allCourses.length > 0;
     document.getElementById("moduleFilterBlock").style.display = hasModules ? "block" : "none";
     document.getElementById("filterGrid").classList.toggle("no-module", !hasModules);
@@ -1499,8 +1382,6 @@
     });
   }
 
-  // keeps the directory's single-select country dropdown in sync with the
-  // (possibly multi-select) country chips, wherever the chips get changed from
   function syncCountryDropdown(){
     const dirCountrySelect = document.getElementById("directoryCountryFilter");
     if (!dirCountrySelect) return;
@@ -1564,7 +1445,6 @@
   document.getElementById("prevPage").addEventListener("click", () => { if (page>1){ page--; renderTable(); }});
   document.getElementById("nextPage").addEventListener("click", () => { page++; renderTable(); });
 
-  // shared builder — reused by the directory export and each per-card export below
   function learnersToCsv(rows){
     const header = ["Email","First name","Last name","Gender","Country","# Programs","Programs","Progress","Health status","Activated","Paid"];
     const lines = [header.join(",")];
@@ -1615,9 +1495,8 @@
     });
   });
 
-  // ---------------- Filtering ----------------
   function getFiltered(){
-    if (!filtersEnabled) return learners; // toggle is off — selections stay visible but don't filter
+    if (!filtersEnabled) return learners;
     return learners.filter(L => {
       if (filters.programs.size && !L.programs.some(p => filters.programs.has(p.program))) return false;
       if (filters.countries.size && !filters.countries.has(L.country)) return false;
@@ -1639,7 +1518,6 @@
     return rows;
   }
 
-  // ---------------- Render orchestration ----------------
   function renderAll(){
     updateEmptyState();
     if (!learners.length) return;
@@ -1648,14 +1526,12 @@
     document.getElementById("filtersSection").style.display = "block";
     document.getElementById("directorySection").style.display = "block";
 
-    const myGeneration = ++renderGeneration; // lets a slower, superseded baseline fetch below detect it's stale and bail out
+    const myGeneration = ++renderGeneration;
     const filtered = getFiltered();
     const cumulativeTotals = computeTotals(filtered);
     const cumulativeCountryAgg = computeCountryAgg(filtered);
     const cumulativeGenderCounts = computeGenderCounts(filtered);
 
-    // Render the plain cumulative view first so the page never sits blank
-    // while an optional baseline snapshot loads in the background.
     deltaModeActive = false;
     countryDeltaActive = false;
     renderStats(cumulativeTotals, null);
@@ -1665,13 +1541,6 @@
     renderTable();
     setDeltaModeBanner(null);
 
-    // Layer a "net new since <baseline>" view on top when the person has
-    // scoped to a specific sprint/year, or is explicitly comparing 2+ dates.
-    // Year/Sprint is the PRIMARY scope here; a Country and/or Program chip
-    // filter narrows the net-new figures down to just those countries/
-    // programs rather than overriding the period scope back to cumulative.
-    // Only a Module/course filter still falls back to cumulative totals,
-    // since the published per-date files don't break totals down by module.
     const hasModuleFilter = filtersEnabled && filters.course !== "all";
     if (hasModuleFilter || !currentFullDate) return;
     const baselineDate = getBaselineDate(currentFullDate);
@@ -1681,12 +1550,10 @@
     const hasProgramFilter = filtersEnabled && filters.programs.size > 0;
 
     loadAgg(baselineDate).then(baselinePayload => {
-      if (myGeneration !== renderGeneration) return; // a newer render has since superseded this one
+      if (myGeneration !== renderGeneration) return;
 
-      // Figure out the baseline's enrolled/activated/paid, narrowed to the
-      // same Country/Program selection as the live (focus) side. Country
-      // takes priority if both are active — same convention already used by
-      // the historical trend chart elsewhere on this page.
+      const baselineTotals = baselinePayload.totals || {};
+
       let baselineEAP = { enrolled: 0, activated: 0, paid: 0 };
       if (hasCountryFilter){
         filters.countries.forEach(c => {
@@ -1699,61 +1566,71 @@
           if (v){ baselineEAP.enrolled += v.enrolled; baselineEAP.activated += v.activated; baselineEAP.paid += v.paid; }
         });
       } else {
-        const b = baselinePayload.totals || {};
-        baselineEAP = { enrolled: b.enrolled||0, activated: b.activated||0, paid: b.paid||0 };
+        baselineEAP = { enrolled: baselineTotals.enrolled||0, activated: baselineTotals.activated||0, paid: baselineTotals.paid||0 };
       }
 
-      // Graduated/Multi-program aren't broken down by country or program in
-      // the published files, so they can't be diffed accurately once either
-      // filter is active — show the filtered cumulative count for just those
-      // two fields in that case, rather than an inaccurate guess.
       const filterActiveForGradMulti = hasCountryFilter || hasProgramFilter;
-      const baselineGraduated = filterActiveForGradMulti ? 0 : ((baselinePayload.totals && baselinePayload.totals.graduated) || 0);
-      const baselineMulti = filterActiveForGradMulti ? 0 : ((baselinePayload.totals && baselinePayload.totals.multi) || 0);
+      const graduatedHasBaseline = !filterActiveForGradMulti && hasOwn(baselineTotals, "graduated");
+      const multiHasBaseline = !filterActiveForGradMulti && hasOwn(baselineTotals, "multi");
 
       const deltaTotals = {
         enrolled: cumulativeTotals.enrolled - baselineEAP.enrolled,
         activated: cumulativeTotals.activated - baselineEAP.activated,
         paid: cumulativeTotals.paid - baselineEAP.paid,
-        graduated: cumulativeTotals.graduated - baselineGraduated,
-        multi: cumulativeTotals.multi - baselineMulti
+        graduated: graduatedHasBaseline ? (cumulativeTotals.graduated - baselineTotals.graduated) : cumulativeTotals.graduated,
+        multi: multiHasBaseline ? (cumulativeTotals.multi - baselineTotals.multi) : cumulativeTotals.multi
       };
       deltaModeActive = true;
-      renderStats(deltaTotals, { baselineDate, focusDate: currentFullDate, cumulativeEnrolled: cumulativeTotals.enrolled });
+      renderStats(deltaTotals, {
+        baselineDate, focusDate: currentFullDate, cumulativeEnrolled: cumulativeTotals.enrolled,
+        graduatedIsCumulative: !graduatedHasBaseline,
+        multiIsCumulative: !multiHasBaseline
+      });
 
-      // The bar chart/leaderboard are inherently a by-COUNTRY breakdown. That
-      // stays accurate when diffed against the baseline's own byCountry
-      // figures — UNLESS a Program filter (without a Country filter) is
-      // active, since the published files have no "byCountry within this
-      // program" cross-tab to diff against; subtracting the baseline's
-      // all-programs country totals in that case would understate (or even
-      // show negative) growth. So that one combination falls back to showing
-      // the plain filtered cumulative count for the chart/leaderboard only,
-      // while the stat cards above still show accurate program-scoped net-new.
-      countryDeltaActive = !(hasProgramFilter && !hasCountryFilter);
+      const baselineByCountry = baselinePayload.byCountry;
+      const baselineHasCountryData = !!baselineByCountry && Object.keys(baselineByCountry).length > 0;
+      countryDeltaActive = baselineHasCountryData && !(hasProgramFilter && !hasCountryFilter);
+
       if (countryDeltaActive){
-        const deltaCountryMap = deltaMapFromByCountry(baselinePayload.byCountry, cumulativeCountryAgg);
+        const deltaCountryMap = deltaMapFromByCountry(baselineByCountry, cumulativeCountryAgg);
         renderBarChart(deltaCountryMap);
         renderScoreboard(deltaCountryMap, true);
       } else {
         renderBarChart(cumulativeCountryAgg);
         renderScoreboard(cumulativeCountryAgg, true);
       }
-      renderGenderChart(deltaMapFromGender(baselinePayload.gender, cumulativeGenderCounts));
-      setDeltaModeBanner({ baselineDate, focusDate: currentFullDate, countryChartIsCumulative: !countryDeltaActive });
+
+      const baselineGender = baselinePayload.gender;
+      const baselineHasGenderData = !!baselineGender && Object.keys(baselineGender).length > 0;
+      if (baselineHasGenderData){
+        renderGenderChart(deltaMapFromGender(baselineGender, cumulativeGenderCounts));
+      } else {
+        renderGenderChart(cumulativeGenderCounts);
+      }
+
+      setDeltaModeBanner({
+        baselineDate, focusDate: currentFullDate,
+        countryChartIsCumulative: !countryDeltaActive,
+        countryChartReason: !baselineHasCountryData
+          ? "this baseline snapshot doesn't have a country breakdown published"
+          : (hasProgramFilter && !hasCountryFilter)
+            ? "net-new can't be narrowed to a Program's by-country breakdown"
+            : null
+      });
     }).catch(() => {
       showToast("Couldn't load the baseline snapshot for this period comparison — showing cumulative totals instead.");
     });
   }
 
-  // country/gender deltas: subtract the baseline's per-key counts from the
-  // current (focus) per-key counts, treating a key missing from the baseline
-  // (e.g. a country with no published data yet back then) as zero
   function deltaMapFromByCountry(baselineByCountry, focusMap){
     const result = new Map();
     focusMap.forEach((v, key) => {
       const b = (baselineByCountry && baselineByCountry[key]) || { enrolled: 0, activated: 0, paid: 0 };
-      result.set(key, { enrolled: v.enrolled - b.enrolled, activated: v.activated - b.activated, paid: v.paid - b.paid });
+      result.set(key, {
+        enrolled: Math.max(0, v.enrolled - (b.enrolled||0)),
+        activated: Math.max(0, v.activated - (b.activated||0)),
+        paid: Math.max(0, v.paid - (b.paid||0))
+      });
     });
     return result;
   }
@@ -1761,23 +1638,41 @@
     const result = new Map();
     focusMap.forEach((v, key) => {
       const b = (baselineGender && baselineGender[key]) || 0;
-      result.set(key, v - b);
+      result.set(key, Math.max(0, v - b));
     });
     return result;
   }
 
   function setDeltaModeBanner(info){
     const banner = document.getElementById("deltaModeBanner");
+    const barTitle = document.getElementById("barChartTitle");
+    const boardTitle = document.getElementById("leaderboardTitle");
+    const barNote = document.getElementById("barChartCumulativeNote");
+    const boardNote = document.getElementById("leaderboardCumulativeNote");
     if (!info){
       banner.style.display = "none";
+      barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
+      boardTitle.textContent = "Country leaderboard";
+      barNote.style.display = "none";
+      boardNote.style.display = "none";
       return;
     }
-    let text = "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
-    if (info.countryChartIsCumulative){
-      text += " The chart and leaderboard below can't be narrowed to a Program's net-new by country, so they're showing cumulative totals for the selected program instead — the figures above are still accurate net-new.";
-    }
-    document.getElementById("deltaModeBannerText").textContent = text;
+    document.getElementById("deltaModeBannerText").textContent =
+      "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
     banner.style.display = "flex";
+
+    // Titles never change — the banner above is the one place that announces
+    // net-new mode, so individual section headers stay exactly as always.
+    barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
+    boardTitle.textContent = "Country leaderboard";
+    if (info.countryChartIsCumulative){
+      const reasonText = "Showing cumulative totals here — " + (info.countryChartReason || "net-new isn't available for this view") + ".";
+      barNote.textContent = reasonText; barNote.style.display = "inline";
+      boardNote.textContent = reasonText; boardNote.style.display = "inline";
+    } else {
+      barNote.style.display = "none";
+      boardNote.style.display = "none";
+    }
   }
   document.getElementById("deltaModeExitBtn").addEventListener("click", () => {
     selectedYear = "all";
@@ -1790,10 +1685,6 @@
     showToast("Showing cumulative totals as of " + (currentFullDate || "the latest date") + ".");
   });
 
-  // Public/summary mode: only aggregate counts are available (no per-learner
-  // rows), so filters and the learner directory are hidden — there's nothing
-  // for them to operate on. Net-new mode needs a full per-learner snapshot
-  // to diff against, so it never applies here.
   function renderPublicSummary(payload){
     viewMode = "summary";
     publishedAgg = payload;
@@ -1801,6 +1692,7 @@
     document.getElementById("filtersSection").style.display = "none";
     document.getElementById("directorySection").style.display = "none";
     deltaModeActive = false;
+    countryDeltaActive = false;
     renderStats(payload.totals, null);
     renderGenderChart(new Map(Object.entries(payload.gender)));
     const countryAgg = new Map(Object.entries(payload.byCountry));
@@ -1820,12 +1712,16 @@
     };
   }
 
+  // Labels and footnote formulas stay identical whether showing cumulative
+  // totals or a net-new (period) view — only the underlying numbers change.
+  // The top banner is the one place that announces "this is net-new"; the
+  // cards themselves just show the ratios plainly, same as always.
   function renderStats(totals, meta){
     lastTotals = totals;
     const { enrolled, activated, paid, multi, graduated } = totals;
     const inDeltaMode = !!(meta && meta.baselineDate);
 
-    document.getElementById("statEnrolledLabel").textContent = inDeltaMode ? "New enrollments" : "Enrolled learners";
+    document.getElementById("statEnrolledLabel").textContent = "Enrolled learners";
     document.getElementById("statEnrolled").textContent = inDeltaMode ? fmtSigned(enrolled) : enrolled.toLocaleString();
     const anyFilterActive = filtersEnabled && (filters.programs.size || filters.countries.size || filters.course !== "all");
     document.getElementById("statEnrolledPct").textContent = inDeltaMode
@@ -1834,21 +1730,19 @@
         ? pct(enrolled, learners.length) + "% of total enrolled (" + learners.length.toLocaleString() + ")"
         : "matching current filters";
 
-    document.getElementById("statActivatedLabel").textContent = inDeltaMode ? "New activations" : "Activated";
+    document.getElementById("statActivatedLabel").textContent = "Activated";
     document.getElementById("statActivated").textContent = inDeltaMode ? fmtSigned(activated) : activated.toLocaleString();
-    document.getElementById("statActivatedPct").textContent =
-      pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
+    document.getElementById("statActivatedPct").textContent = pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
 
-    document.getElementById("statPaidLabel").textContent = inDeltaMode ? "New paid" : "Paid";
+    document.getElementById("statPaidLabel").textContent = "Paid";
     document.getElementById("statPaid").textContent = inDeltaMode ? fmtSigned(paid) : paid.toLocaleString();
     document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
 
-    document.getElementById("statGraduatedLabel").textContent = inDeltaMode ? "New graduates" : "Graduated";
+    document.getElementById("statGraduatedLabel").textContent = "Graduated";
     document.getElementById("statGraduated").textContent = inDeltaMode ? fmtSigned(graduated||0) : (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent =
-      pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
+    document.getElementById("statGraduatedPct").textContent = pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
 
-    document.getElementById("statMultiLabel").textContent = inDeltaMode ? "New multi-program" : "Multi-program learners";
+    document.getElementById("statMultiLabel").textContent = "Multi-program learners";
     document.getElementById("statMulti").textContent = inDeltaMode ? fmtSigned(multi) : multi.toLocaleString();
     document.getElementById("statMultiPct").textContent = "enrolled in 2+ programs";
   }
@@ -1911,7 +1805,7 @@
   function computeCountryAgg(rows){
     const agg = new Map();
     rows.forEach(L => {
-      if (L.country === "Other") return; // keep country views scoped to the 8 hub countries
+      if (L.country === "Other") return;
       let g = agg.get(L.country);
       if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(L.country, g); }
       g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
@@ -1923,7 +1817,7 @@
     const agg = new Map();
     rows.forEach(L => {
       L.programs.forEach(p => {
-        if (p.program === "Other") return; // keep program views scoped to the 8 real programs
+        if (p.program === "Other") return;
         let g = agg.get(p.program);
         if (!g){ g = { enrolled:0, activated:0, paid:0 }; agg.set(p.program, g); }
         g.enrolled++; if (L.activated) g.activated++; if (L.paid) g.paid++;
@@ -1933,9 +1827,6 @@
   }
 
   function renderBarChart(groups){
-    // In cumulative mode, a country with literally nothing recorded is just
-    // noise — hide it. In net-new mode, 0 is meaningful information (no
-    // growth there this period), so every country stays visible.
     const labels = countryDeltaActive
       ? [...groups.keys()].sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled)
       : [...groups.keys()].filter(k => groups.get(k).enrolled > 0).sort((a,b)=>groups.get(b).enrolled - groups.get(a).enrolled);
@@ -1981,9 +1872,6 @@
       convEnrolled: v.enrolled ? v.paid/v.enrolled : 0,
       convActivated: v.paid ? v.activated/v.paid : 0
     }));
-    // In cumulative mode, hide countries with literally nothing recorded —
-    // pure noise. In net-new mode, zero (or even negative) growth is itself
-    // meaningful, so every country with a hub presence stays listed.
     list = countryDeltaActive ? list : list.filter(c => c.enrolled > 0);
 
     const metric = document.getElementById("rankMetric").value;
@@ -2000,17 +1888,17 @@
         '<span></span>' +
       '</div>';
 
+    if (!list.length){
+      board.innerHTML += '<div style="padding:16px 4px; color:var(--muted); font-size:12.5px;">No countries match the current filters' + (countryDeltaActive ? " with any activity this period." : ".") + '</div>';
+      return;
+    }
+
     list.forEach((c, i) => {
       const lane = document.createElement("div");
       lane.className = "lane";
-      // bar length always matches whatever's selected in "Rank by", so the
-      // visual order lines up with the row order regardless of metric. A
-      // negative net-new value (rare, e.g. data corrections) just renders as
-      // an empty bar rather than a negative width.
       const barWidth = Math.max(0, (c[metric] / maxMetric) * 100);
       let trackInner;
       if (metric === "enrolled"){
-        // the one case with enough shared scale to show the activated/paid funnel inside the bar
         const actWidth = c.enrolled ? Math.max(0, (c.activated / c.enrolled) * 100) : 0;
         const paidWidth = c.enrolled ? Math.max(0, (c.paid / c.enrolled) * 100) : 0;
         trackInner = '<div class="seg-activated" style="width:'+actWidth.toFixed(1)+'%"></div>' +
@@ -2096,8 +1984,7 @@
     return String(str).replace(/[&<>"']/g, s => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[s]));
   }
 
-  // ---------------- Init ----------------
-  setAdmin(false);       // default to the public/executive view — upload UI stays hidden until admin signs in
+  setAdmin(false);
   updateEmptyState();
   loadSnapshotsIndex();
 
