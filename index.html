@@ -1768,12 +1768,8 @@
 
   function setDeltaModeBanner(info){
     const banner = document.getElementById("deltaModeBanner");
-    const barTitle = document.getElementById("barChartTitle");
-    const boardTitle = document.getElementById("leaderboardTitle");
     if (!info){
       banner.style.display = "none";
-      barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
-      boardTitle.textContent = "Country leaderboard";
       return;
     }
     let text = "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
@@ -1782,8 +1778,6 @@
     }
     document.getElementById("deltaModeBannerText").textContent = text;
     banner.style.display = "flex";
-    barTitle.textContent = info.countryChartIsCumulative ? "Enrolled vs. Activated vs. Paid, by country" : "Net new Enrolled vs. Activated vs. Paid, by country";
-    boardTitle.textContent = info.countryChartIsCumulative ? "Country leaderboard" : "Country leaderboard (net new)";
   }
   document.getElementById("deltaModeExitBtn").addEventListener("click", () => {
     selectedYear = "all";
@@ -1842,25 +1836,21 @@
 
     document.getElementById("statActivatedLabel").textContent = inDeltaMode ? "New activations" : "Activated";
     document.getElementById("statActivated").textContent = inDeltaMode ? fmtSigned(activated) : activated.toLocaleString();
-    document.getElementById("statActivatedPct").textContent = inDeltaMode
-      ? pct(activated, enrolled) + "% of new enrollees"
-      : pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
+    document.getElementById("statActivatedPct").textContent =
+      pct(activated,enrolled) + "% of enrolled · " + pct(activated,paid) + "% of paid";
 
     document.getElementById("statPaidLabel").textContent = inDeltaMode ? "New paid" : "Paid";
     document.getElementById("statPaid").textContent = inDeltaMode ? fmtSigned(paid) : paid.toLocaleString();
-    document.getElementById("statPaidPct").textContent = inDeltaMode
-      ? pct(paid, enrolled) + "% of new enrollees"
-      : pct(paid,enrolled) + "% of enrolled";
+    document.getElementById("statPaidPct").textContent = pct(paid,enrolled) + "% of enrolled";
 
     document.getElementById("statGraduatedLabel").textContent = inDeltaMode ? "New graduates" : "Graduated";
     document.getElementById("statGraduated").textContent = inDeltaMode ? fmtSigned(graduated||0) : (graduated||0).toLocaleString();
-    document.getElementById("statGraduatedPct").textContent = inDeltaMode
-      ? "in this period"
-      : pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
+    document.getElementById("statGraduatedPct").textContent =
+      pct(graduated||0,enrolled) + "% of enrolled · " + pct(graduated||0,activated) + "% of activated · " + pct(graduated||0,paid) + "% of paid";
 
     document.getElementById("statMultiLabel").textContent = inDeltaMode ? "New multi-program" : "Multi-program learners";
     document.getElementById("statMulti").textContent = inDeltaMode ? fmtSigned(multi) : multi.toLocaleString();
-    document.getElementById("statMultiPct").textContent = inDeltaMode ? "became multi-program in this period" : "enrolled in 2+ programs";
+    document.getElementById("statMultiPct").textContent = "enrolled in 2+ programs";
   }
 
   function pct(n,d){ if (!d) return "0"; return ((n/d)*100).toFixed(1); }
@@ -2001,8 +1991,8 @@
 
     const maxMetric = Math.max(...list.map(c=>Math.abs(c[metric])), 0.0001);
     const board = document.getElementById("scoreboard");
-    const headEnrolled = countryDeltaActive ? "New enrolled" : "Enrolled";
-    const headPaid = countryDeltaActive ? "New paid" : "Paid";
+    const headEnrolled = "Enrolled";
+    const headPaid = "Paid";
     board.innerHTML =
       '<div class="lane-head">' +
         '<span></span><span>Country</span><span></span>' +
