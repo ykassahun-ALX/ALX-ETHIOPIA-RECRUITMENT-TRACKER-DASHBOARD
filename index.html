@@ -1542,12 +1542,18 @@
     setDeltaModeBanner(null);
 
     const hasModuleFilter = filtersEnabled && filters.course !== "all";
-    if (hasModuleFilter || !currentFullDate) return;
-    const baselineDate = getBaselineDate(currentFullDate);
-    if (!baselineDate) return;
-
     const hasCountryFilter = filtersEnabled && filters.countries.size > 0;
     const hasProgramFilter = filtersEnabled && filters.programs.size > 0;
+    // Published baseline files only have a byCountry breakdown OR a
+    // byProgram breakdown — never a combined "this country within this
+    // program" cross-tab. With both filters on at once, neither slice is
+    // actually valid to diff against, so net-new steps aside entirely here
+    // (same as the Module-filter case) rather than subtracting a baseline
+    // that doesn't match the current scope.
+    const bothCountryAndProgramFilters = hasCountryFilter && hasProgramFilter;
+    if (hasModuleFilter || bothCountryAndProgramFilters || !currentFullDate) return;
+    const baselineDate = getBaselineDate(currentFullDate);
+    if (!baselineDate) return;
 
     loadAgg(baselineDate).then(baselinePayload => {
       if (myGeneration !== renderGeneration) return;
