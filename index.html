@@ -1600,8 +1600,14 @@
         renderScoreboard(cumulativeCountryAgg, true);
       }
 
+      // Gender has no per-country or per-program breakdown in the published
+      // files (only a single global count per gender), so a Country or
+      // Program filter makes the baseline inapplicable to diff against —
+      // same limitation as Graduated/Multi above. Falls back to the plain
+      // filtered cumulative count in that case instead of producing a
+      // nonsensical subtraction (global baseline minus a filtered subset).
       const baselineGender = baselinePayload.gender;
-      const baselineHasGenderData = !!baselineGender && Object.keys(baselineGender).length > 0;
+      const baselineHasGenderData = !filterActiveForGradMulti && !!baselineGender && Object.keys(baselineGender).length > 0;
       if (baselineHasGenderData){
         renderGenderChart(deltaMapFromGender(baselineGender, cumulativeGenderCounts));
       } else {
