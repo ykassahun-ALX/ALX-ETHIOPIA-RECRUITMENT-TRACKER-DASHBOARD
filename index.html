@@ -506,7 +506,7 @@
 
     <section>
       <div class="card gender-card">
-        <div class="section-head"><h2>Gender split</h2></div>
+        <div class="section-head"><h2>Gender split</h2><span class="sub" id="genderCumulativeNote" style="display:none; flex-basis:100%"></span></div>
         <div class="gender-flex">
           <div class="chart-box chart-box-donut">
             <canvas id="genderChart"></canvas>
@@ -1353,6 +1353,11 @@
   }
 
   function buildFilterUI(){
+    // Loading another date rebuilds every chip. Drop any saved selection that no longer has a chip
+    // (e.g. a program that didn't exist yet on an older date) so nothing filters invisibly.
+    [...filters.programs].forEach(p => { if (!allPrograms.includes(p)) filters.programs.delete(p); });
+    [...filters.countries].forEach(c => { if (!allCountries.includes(c)) filters.countries.delete(c); });
+
     const progWrap = document.getElementById("programChips");
     progWrap.innerHTML = "";
     allPrograms.forEach(p => progWrap.appendChild(makeChip(p, "programs")));
@@ -1368,6 +1373,8 @@
       opt.value = c; opt.textContent = c;
       courseSelect.appendChild(opt);
     });
+    courseSelect.value = allCourses.includes(filters.course) ? filters.course : "all";
+    filters.course = courseSelect.value;
     const hasModules = allCourses.length > 0;
     document.getElementById("moduleFilterBlock").style.display = hasModules ? "block" : "none";
     document.getElementById("filterGrid").classList.toggle("no-module", !hasModules);
@@ -1380,6 +1387,7 @@
       opt.value = c; opt.textContent = c;
       dirCountrySelect.appendChild(opt);
     });
+    syncCountryDropdown();
   }
 
   function syncCountryDropdown(){
@@ -1392,6 +1400,7 @@
     const el = document.createElement("div");
     el.className = "chip";
     el.textContent = label;
+    if (filters[setName].has(label)) el.classList.add("active"); // chips are rebuilt on every snapshot load - keep the highlight
     el.addEventListener("click", () => {
       const set = filters[setName];
       if (set.has(label)) set.delete(label); else set.add(label);
@@ -1630,6 +1639,9 @@
       // nonsensical subtraction (global baseline minus a filtered subset).
       const baselineGender = baselinePayload.gender;
       const baselineHasGenderData = !filterActiveForGradMulti && !!baselineGender && Object.keys(baselineGender).length > 0;
+      const genderReason = filterActiveForGradMulti
+        ? "gender isn't tracked per country or program, so net-new can't follow your filter"
+        : (!baselineHasGenderData ? "this baseline snapshot has no gender breakdown published" : null);
       if (baselineHasGenderData){
         renderGenderChart(deltaMapFromGender(baselineGender, cumulativeGenderCounts));
       } else {
@@ -1639,6 +1651,8 @@
       setDeltaModeBanner({
         baselineDate, focusDate: currentFullDate,
         countryChartIsCumulative: !countryDeltaActive,
+        genderIsCumulative: !baselineHasGenderData,
+        genderReason: genderReason,
         countryChartReason: !baselineHasCountryData
           ? "this baseline snapshot doesn't have a country breakdown published"
           : (hasProgramFilter && !hasCountryFilter)
@@ -1677,7 +1691,9 @@
     const boardTitle = document.getElementById("leaderboardTitle");
     const barNote = document.getElementById("barChartCumulativeNote");
     const boardNote = document.getElementById("leaderboardCumulativeNote");
+    const genderNote = document.getElementById("genderCumulativeNote");
     if (!info){
+      genderNote.style.display = "none";
       banner.style.display = "none";
       barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
       boardTitle.textContent = "Country leaderboard";
@@ -1688,6 +1704,13 @@
     document.getElementById("deltaModeBannerText").textContent =
       "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
     banner.style.display = "flex";
+
+    if (info.genderIsCumulative){
+      genderNote.textContent = "All-time split shown here - " + (info.genderReason || "net-new isn't available for this view") + ".";
+      genderNote.style.display = "block";
+    } else {
+      genderNote.style.display = "none";
+    }
 
     // Titles never change — the banner above is the one place that announces
     // net-new mode, so individual section headers stay exactly as always.
@@ -1795,13 +1818,14 @@
   function renderGenderChart(counts){
     const rawLabels = [...counts.keys()];
     const data = rawLabels.map(l=>counts.get(l));
-    const total = data.reduce((a,b)=>a+b,0) || 1;
+    const rawTotal = data.reduce((a,b)=>a+b,0);
+    const total = rawTotal || 1; // only a divide-by-zero guard for the percentages
     const labels = rawLabels.map(l => prettyGender(l));
     const icons = rawLabels.map(l => genderIcon(l));
     const colors = ["#3B6E9E","#B9762F","#4FB584","#A6483F","#8C8C8C"];
     const c = chartColors();
 
-    document.getElementById("genderCenterValue").textContent = total.toLocaleString();
+    document.getElementById("genderCenterValue").textContent = rawTotal.toLocaleString();
 
     const legendWrap = document.getElementById("genderLegend");
     legendWrap.innerHTML = "";
