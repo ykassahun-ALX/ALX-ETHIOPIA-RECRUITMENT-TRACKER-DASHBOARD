@@ -605,7 +605,11 @@
   const fullSnapshotCache = new Map();
   let deltaModeActive = false;
   let countryDeltaActive = false;
-  let renderGeneration = 0;
+  let renderGeneration = 0;             // bumped on every renderAll() call; used to discard a stale baseline fetch if the user moves on before it resolves
+  let lastScoreboardAgg = null;         // what the leaderboard is currently showing, so changing "Rank by" re-sorts THAT (net-new or all-time) instead of recomputing all-time
+  let lastScoreboardInteractive = true;
+  let bannerBaseText = "";             // the net-new banner's normal sentence (a 'refining' suffix is added/removed on top of it)
+  const pendingLearnerFetches = new Map(); // date -> in-flight download, so quick repeat clicks don't download the same snapshot twice
   let lastTrendDates = null;
   let lastTrendPayloads = null;
   let theme = "light";
@@ -648,9 +652,7 @@
     themeIcon.textContent = theme === "dark" ? "☀️" : "🌙";
     themeLabel.textContent = theme === "dark" ? "Light" : "Dark";
     if (viewMode === "full"){
-      const filtered = getFiltered();
-      renderGenderChart(computeGenderCounts(filtered));
-      renderBarChart(computeCountryAgg(filtered));
+      renderAll(); // redraw in whatever mode is active (net-new or all-time) so the numbers don't change with the theme
     } else if (viewMode === "summary" && publishedAgg){
       renderGenderChart(new Map(Object.entries(publishedAgg.gender)));
       renderBarChart(new Map(Object.entries(publishedAgg.byCountry)));
@@ -1447,8 +1449,7 @@
   });
 
   document.getElementById("rankMetric").addEventListener("change", () => {
-    if (viewMode === "full") renderScoreboard(computeCountryAgg(getFiltered()), true);
-    else if (viewMode === "summary" && publishedAgg) renderScoreboard(new Map(Object.entries(publishedAgg.byCountry)), false);
+    if (lastScoreboardAgg) renderScoreboard(lastScoreboardAgg, lastScoreboardInteractive); // re-sort what is on screen (net-new stays net-new)
   });
 
   document.getElementById("prevPage").addEventListener("click", () => { if (page>1){ page--; renderTable(); }});
@@ -1527,6 +1528,118 @@
     return rows;
   }
 
+  // ---- exact net-new gender for a filtered period view ----
+  function learnerMatchesChipFilters(L){
+    if (filters.programs.size && !L.programs.some(p => filters.programs.has(p.program))) return false;
+    if (filters.countries.size && !filters.countries.has(L.country)) return false;
+    return true;
+  }
+  // Loads one date's full learner list WITHOUT changing what the page is showing
+  // (used to look at the baseline snapshot). Shares the cache with the main loader.
+  function fetchLearnersForDate(date){
+    if (fullSnapshotCache.has(date)) return Promise.resolve(fullSnapshotCache.get(date));
+    if (pendingLearnerFetches.has(date)) return pendingLearnerFetches.get(date);
+    const parts = datePartsMap.get(date) || 1;
+    const fetches = [];
+    for (let p = 1; p <= parts; p++){
+      fetches.push(
+        fetch(noCacheUrl("data-" + date + "-part" + p + ".json"), { cache: "no-store" })
+          .then(res => { if (!res.ok) throw new Error("missing part " + p); return res.json(); })
+      );
+    }
+    const promise = Promise.all(fetches).then(chunks => {
+      let merged = [];
+      chunks.forEach(ch => { merged = merged.concat(ch.learners || []); });
+      fullSnapshotCache.set(date, merged);
+      pendingLearnerFetches.delete(date);
+      return merged;
+    }).catch(err => { pendingLearnerFetches.delete(date); throw err; });
+    pendingLearnerFetches.set(date, promise);
+    return promise;
+  }
+
+  // ---- ONE source of truth for a filtered period view ----
+  // The cards, charts, leaderboard and gender split are all counted from this single pass,
+  // so they always agree with each other.
+  // "New enrolled" = people in the current filtered view who were NOT already in that same
+  // filtered view on the baseline date. Activated / Paid / Graduated / Multi-program = people
+  // who reached that status since the baseline date.
+  function computeExactPeriodView(filtered, baselineLearners){
+    const before = new Map();
+    baselineLearners.forEach(L => { if (learnerMatchesChipFilters(L)) before.set(L.email, L); });
+    const totals = { enrolled:0, activated:0, paid:0, graduated:0, multi:0 };
+    const countryAgg = new Map();
+    const genderCounts = new Map();
+    filtered.forEach(L => {
+      const b = before.get(L.email);
+      const isNew = !b;
+      const newAct = !!L.activated && !(b && b.activated);
+      const newPaid = !!L.paid && !(b && b.paid);
+      if (isNew){ totals.enrolled++; genderCounts.set(L.gender, (genderCounts.get(L.gender) || 0) + 1); }
+      if (newAct) totals.activated++;
+      if (newPaid) totals.paid++;
+      if (L.graduated && !(b && b.graduated)) totals.graduated++;
+      if (L.multi && !(b && b.multi)) totals.multi++;
+      if (L.country !== "Other"){
+        let g = countryAgg.get(L.country);
+        if (!g){ g = { enrolled:0, activated:0, paid:0 }; countryAgg.set(L.country, g); }
+        if (isNew) g.enrolled++;
+        if (newAct) g.activated++;
+        if (newPaid) g.paid++;
+      }
+    });
+    return { totals, countryAgg, genderCounts };
+  }
+  function setBannerRefining(on){
+    document.getElementById("deltaModeBannerText").textContent = bannerBaseText + (on ? " Refining the figures for your filters…" : "");
+  }
+  function showPeriodLoadingBanner(baselineDate){
+    bannerBaseText = "Calculating net-new activity from " + baselineDate + " to " + currentFullDate + " for your filters…";
+    document.getElementById("deltaModeBannerText").textContent = bannerBaseText;
+    document.getElementById("deltaModeBanner").style.display = "flex";
+  }
+  function startExactPeriodView(ctx){
+    const { baselineDate, filtered, cumulativeEnrolled, myGeneration, updateEverything, loadingBanner } = ctx;
+    if (updateEverything && !loadingBanner) setBannerRefining(true);
+    fetchLearnersForDate(baselineDate).then(baselineLearners => {
+      if (myGeneration !== renderGeneration) return; // the person has moved on - drop this result
+      const res = computeExactPeriodView(filtered, baselineLearners);
+      if (updateEverything){
+        deltaModeActive = true;
+        countryDeltaActive = true;
+        renderStats(res.totals, { baselineDate, focusDate: currentFullDate, cumulativeEnrolled });
+        renderBarChart(res.countryAgg);
+        renderScoreboard(res.countryAgg, true);
+        setDeltaModeBanner({ baselineDate, focusDate: currentFullDate, countryChartIsCumulative: false });
+      }
+      renderGenderChart(res.genderCounts);
+      setGenderNote(null);
+    }).catch(() => {
+      if (myGeneration !== renderGeneration) return;
+      if (updateEverything){
+        if (loadingBanner){
+          setDeltaModeBanner(null);
+          showToast("Couldn't load the earlier snapshot - showing all-time totals for these filters.");
+        } else {
+          setBannerRefining(false);
+        }
+      }
+      renderGenderChart(computeGenderCounts(filtered));
+      setGenderNote("All-time split shown here - couldn't load the earlier snapshot needed for this period's split.");
+    });
+  }
+  function setGenderNote(msg){
+    const el = document.getElementById("genderCumulativeNote");
+    if (!el) return;
+    if (msg){ el.textContent = msg; el.style.display = "block"; } else { el.style.display = "none"; }
+  }
+  function showGenderLoading(){
+    if (genderChartRef){ genderChartRef.destroy(); genderChartRef = null; }
+    document.getElementById("genderCenterValue").textContent = "…";
+    document.getElementById("genderLegend").innerHTML = "";
+    setGenderNote("Calculating this period's gender split…");
+  }
+
   // Lines the header's logo + title block up with the "Filters" heading below it.
   // Measured live (rather than hard-coded) so it stays right at any screen width.
   function alignBrandToFilters(){
@@ -1569,16 +1682,20 @@
     const hasModuleFilter = filtersEnabled && filters.course !== "all";
     const hasCountryFilter = filtersEnabled && filters.countries.size > 0;
     const hasProgramFilter = filtersEnabled && filters.programs.size > 0;
-    // Published baseline files only have a byCountry breakdown OR a
-    // byProgram breakdown — never a combined "this country within this
-    // program" cross-tab. With both filters on at once, neither slice is
-    // actually valid to diff against, so net-new steps aside entirely here
-    // (same as the Module-filter case) rather than subtracting a baseline
-    // that doesn't match the current scope.
-    const bothCountryAndProgramFilters = hasCountryFilter && hasProgramFilter;
-    if (hasModuleFilter || bothCountryAndProgramFilters || !currentFullDate) return;
+    const chipFilterActive = hasCountryFilter || hasProgramFilter;
+    // A Module filter still steps aside - nothing published is broken down by module.
+    if (hasModuleFilter || !currentFullDate) return;
     const baselineDate = getBaselineDate(currentFullDate);
     if (!baselineDate) return;
+
+    // The summary files can't answer "this country within this program", so with BOTH
+    // filters on, go straight to the exact per-learner view. The page shows all-time
+    // numbers (with a banner saying so) until it is ready.
+    if (hasCountryFilter && hasProgramFilter){
+      showPeriodLoadingBanner(baselineDate);
+      startExactPeriodView({ baselineDate, filtered, cumulativeEnrolled: cumulativeTotals.enrolled, myGeneration, updateEverything: true, loadingBanner: true });
+      return;
+    }
 
     loadAgg(baselineDate).then(baselinePayload => {
       if (myGeneration !== renderGeneration) return;
@@ -1631,34 +1748,30 @@
         renderScoreboard(cumulativeCountryAgg, true);
       }
 
-      // Gender has no per-country or per-program breakdown in the published
-      // files (only a single global count per gender), so a Country or
-      // Program filter makes the baseline inapplicable to diff against —
-      // same limitation as Graduated/Multi above. Falls back to the plain
-      // filtered cumulative count in that case instead of producing a
-      // nonsensical subtraction (global baseline minus a filtered subset).
+      // The summary files only keep ONE global gender count, so with a Country/Program filter
+      // (or an older baseline with no gender data) the gender card waits for the exact view below.
       const baselineGender = baselinePayload.gender;
-      const baselineHasGenderData = !filterActiveForGradMulti && !!baselineGender && Object.keys(baselineGender).length > 0;
-      const genderReason = filterActiveForGradMulti
-        ? "gender isn't tracked per country or program, so net-new can't follow your filter"
-        : (!baselineHasGenderData ? "this baseline snapshot has no gender breakdown published" : null);
+      const baselineHasGenderData = !chipFilterActive && !!baselineGender && Object.keys(baselineGender).length > 0;
       if (baselineHasGenderData){
         renderGenderChart(deltaMapFromGender(baselineGender, cumulativeGenderCounts));
       } else {
-        renderGenderChart(cumulativeGenderCounts);
+        showGenderLoading();
       }
 
       setDeltaModeBanner({
         baselineDate, focusDate: currentFullDate,
         countryChartIsCumulative: !countryDeltaActive,
-        genderIsCumulative: !baselineHasGenderData,
-        genderReason: genderReason,
         countryChartReason: !baselineHasCountryData
           ? "this baseline snapshot doesn't have a country breakdown published"
           : (hasProgramFilter && !hasCountryFilter)
             ? "net-new can't be narrowed to a Program's by-country breakdown"
             : null
       });
+      // Exact figures from the learner lists. With a Country/Program filter this REPLACES the quick
+      // summary-file numbers above (cards, charts, leaderboard and gender all from one source).
+      if (chipFilterActive || !baselineHasGenderData){
+        startExactPeriodView({ baselineDate, filtered, cumulativeEnrolled: cumulativeTotals.enrolled, myGeneration, updateEverything: chipFilterActive, loadingBanner: false });
+      }
     }).catch(() => {
       showToast("Couldn't load the baseline snapshot for this period comparison — showing cumulative totals instead.");
     });
@@ -1693,6 +1806,7 @@
     const boardNote = document.getElementById("leaderboardCumulativeNote");
     const genderNote = document.getElementById("genderCumulativeNote");
     if (!info){
+      bannerBaseText = "";
       genderNote.style.display = "none";
       banner.style.display = "none";
       barTitle.textContent = "Enrolled vs. Activated vs. Paid, by country";
@@ -1701,16 +1815,9 @@
       boardNote.style.display = "none";
       return;
     }
-    document.getElementById("deltaModeBannerText").textContent =
-      "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
+    bannerBaseText = "Showing NET NEW activity from " + info.baselineDate + " to " + info.focusDate + ", not lifetime totals.";
+    document.getElementById("deltaModeBannerText").textContent = bannerBaseText;
     banner.style.display = "flex";
-
-    if (info.genderIsCumulative){
-      genderNote.textContent = "All-time split shown here - " + (info.genderReason || "net-new isn't available for this view") + ".";
-      genderNote.style.display = "block";
-    } else {
-      genderNote.style.display = "none";
-    }
 
     // Titles never change — the banner above is the one place that announces
     // net-new mode, so individual section headers stay exactly as always.
@@ -1918,6 +2025,7 @@
   }
 
   function renderScoreboard(agg, interactive){
+    lastScoreboardAgg = agg; lastScoreboardInteractive = interactive;
     let list = [...agg.entries()].map(([country, v]) => ({
       country,
       enrolled: v.enrolled, activated: v.activated, paid: v.paid,
