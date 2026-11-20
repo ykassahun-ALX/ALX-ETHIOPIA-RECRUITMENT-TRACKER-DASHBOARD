@@ -485,6 +485,7 @@
         <span><span class="legend-dot" style="background:var(--activated)"></span>Activated</span>
         <span><span class="legend-dot" style="background:var(--paid-color)"></span>Paid</span>
       </div>
+      <div class="sub" id="barChartOtherNote" style="display:none; margin-top:8px"></div>
     </section>
 
     <section class="card">
@@ -502,6 +503,7 @@
         </div>
       </div>
       <div id="scoreboard"></div>
+      <div class="sub" id="leaderboardOtherNote" style="display:none; margin-top:10px"></div>
     </section>
 
     <section>
@@ -610,6 +612,8 @@
   let lastScoreboardInteractive = true;
   let bannerBaseText = "";             // the net-new banner's normal sentence (a 'refining' suffix is added/removed on top of it)
   const pendingLearnerFetches = new Map(); // date -> in-flight download, so quick repeat clicks don't download the same snapshot twice
+  let periodView = null;                // set once the exact "new this period" lists are on screen: { baselineDate, lists:{enrolled,activated,paid,graduated,multi} }. The directory and card downloads use these lists.
+  let periodLoading = false;            // true while those lists are still being worked out
   let lastTrendDates = null;
   let lastTrendPayloads = null;
   let theme = "light";
@@ -1477,7 +1481,8 @@
   }
 
   document.getElementById("exportBtn").addEventListener("click", () => {
-    downloadCsvBlob(learnersToCsv(getFiltered()), "learner_outreach_export.csv");
+    const rows = periodView ? periodView.lists.enrolled : getFiltered();
+    downloadCsvBlob(learnersToCsv(rows), periodView ? "learner_new_since_" + periodView.baselineDate + "_export.csv" : "learner_outreach_export.csv");
   });
 
   const STAT_METRIC_FILTERS = {
@@ -1495,12 +1500,12 @@
         return;
       }
       const metric = btn.dataset.metric;
-      const rows = STAT_METRIC_FILTERS[metric](getFiltered());
+      const rows = periodView ? periodView.lists[metric] : STAT_METRIC_FILTERS[metric](getFiltered()); // in a period view the download is exactly the people on the card
       if (!rows.length){
         showToast("No " + metric + " learners match the current filters.");
         return;
       }
-      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + "_" + todayDateString() + ".csv");
+      downloadCsvBlob(learnersToCsv(rows), "learners_" + metric + (periodView ? "_since_" + periodView.baselineDate : "") + "_" + todayDateString() + ".csv");
       showToast("Downloaded " + rows.length.toLocaleString() + " " + metric + " learner" + (rows.length===1?"":"s") + " (CSV).");
     });
   });
@@ -1518,7 +1523,7 @@
     });
   }
   function getFilteredWithSearch(){
-    let rows = getFiltered();
+    let rows = periodView ? periodView.lists.enrolled : getFiltered(); // in a period view the directory lists the people counted in the Enrolled card
     if (filters.search){
       rows = rows.filter(L =>
         L.email.includes(filters.search) ||
@@ -1568,18 +1573,22 @@
     const before = new Map();
     baselineLearners.forEach(L => { if (learnerMatchesChipFilters(L)) before.set(L.email, L); });
     const totals = { enrolled:0, activated:0, paid:0, graduated:0, multi:0 };
+    const lists = { enrolled:[], activated:[], paid:[], graduated:[], multi:[] }; // the people behind each number (used by the directory and card downloads)
     const countryAgg = new Map();
     const genderCounts = new Map();
+    let otherNew = 0;
     filtered.forEach(L => {
       const b = before.get(L.email);
       const isNew = !b;
       const newAct = !!L.activated && !(b && b.activated);
       const newPaid = !!L.paid && !(b && b.paid);
-      if (isNew){ totals.enrolled++; genderCounts.set(L.gender, (genderCounts.get(L.gender) || 0) + 1); }
-      if (newAct) totals.activated++;
-      if (newPaid) totals.paid++;
-      if (L.graduated && !(b && b.graduated)) totals.graduated++;
-      if (L.multi && !(b && b.multi)) totals.multi++;
+      const newGrad = !!L.graduated && !(b && b.graduated);
+      const newMulti = !!L.multi && !(b && b.multi);
+      if (isNew){ totals.enrolled++; lists.enrolled.push(L); genderCounts.set(L.gender, (genderCounts.get(L.gender) || 0) + 1); if (L.country === "Other") otherNew++; }
+      if (newAct){ totals.activated++; lists.activated.push(L); }
+      if (newPaid){ totals.paid++; lists.paid.push(L); }
+      if (newGrad){ totals.graduated++; lists.graduated.push(L); }
+      if (newMulti){ totals.multi++; lists.multi.push(L); }
       if (L.country !== "Other"){
         let g = countryAgg.get(L.country);
         if (!g){ g = { enrolled:0, activated:0, paid:0 }; countryAgg.set(L.country, g); }
@@ -1588,7 +1597,7 @@
         if (newPaid) g.paid++;
       }
     });
-    return { totals, countryAgg, genderCounts };
+    return { totals, countryAgg, genderCounts, lists, otherNew };
   }
   function setBannerRefining(on){
     document.getElementById("deltaModeBannerText").textContent = bannerBaseText + (on ? " Refining the figures for your filters…" : "");
@@ -1599,33 +1608,57 @@
     document.getElementById("deltaModeBanner").style.display = "flex";
   }
   function startExactPeriodView(ctx){
-    const { baselineDate, filtered, cumulativeEnrolled, myGeneration, updateEverything, loadingBanner } = ctx;
-    if (updateEverything && !loadingBanner) setBannerRefining(true);
+    const { baselineDate, filtered, cumulativeEnrolled, myGeneration, updateEverything, loadingBanner, genderPending } = ctx;
+    if (updateEverything){
+      periodLoading = true;
+      renderTable();
+      if (!loadingBanner) setBannerRefining(true);
+    }
     fetchLearnersForDate(baselineDate).then(baselineLearners => {
       if (myGeneration !== renderGeneration) return; // the person has moved on - drop this result
       const res = computeExactPeriodView(filtered, baselineLearners);
       if (updateEverything){
+        periodLoading = false;
+        periodView = { baselineDate, lists: res.lists };
         deltaModeActive = true;
         countryDeltaActive = true;
         renderStats(res.totals, { baselineDate, focusDate: currentFullDate, cumulativeEnrolled });
         renderBarChart(res.countryAgg);
         renderScoreboard(res.countryAgg, true);
         setDeltaModeBanner({ baselineDate, focusDate: currentFullDate, countryChartIsCumulative: false });
+        setOtherCountryNotes(res.otherNew);
+        renderTable();
       }
       renderGenderChart(res.genderCounts);
       setGenderNote(null);
     }).catch(() => {
       if (myGeneration !== renderGeneration) return;
       if (updateEverything){
+        periodLoading = false;
+        renderTable();
         if (loadingBanner){
           setDeltaModeBanner(null);
           showToast("Couldn't load the earlier snapshot - showing all-time totals for these filters.");
         } else {
           setBannerRefining(false);
+          showToast("Couldn't load the earlier snapshot - the directory and downloads show all learners, not just the new ones.");
         }
       }
-      renderGenderChart(computeGenderCounts(filtered));
-      setGenderNote("All-time split shown here - couldn't load the earlier snapshot needed for this period's split.");
+      if (genderPending || loadingBanner){
+        renderGenderChart(computeGenderCounts(filtered));
+        setGenderNote("All-time split shown here - couldn't load the earlier snapshot needed for this period's split.");
+      }
+    });
+  }
+  // The cards and gender split count everyone; the country chart and leaderboard only list the 8 hub
+  // countries. This says how many learners sit outside them so the totals reconcile.
+  function setOtherCountryNotes(count){
+    const text = count > 0 ? "Not shown: " + count.toLocaleString() + " learner" + (count === 1 ? "" : "s") + " from countries outside these 8 (they are counted in the cards above)." : "";
+    ["barChartOtherNote", "leaderboardOtherNote"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = text;
+      el.style.display = count > 0 ? "block" : "none";
     });
   }
   function setGenderNote(msg){
@@ -1670,6 +1703,7 @@
     const cumulativeCountryAgg = computeCountryAgg(filtered);
     const cumulativeGenderCounts = computeGenderCounts(filtered);
 
+    periodView = null; periodLoading = false;
     deltaModeActive = false;
     countryDeltaActive = false;
     renderStats(cumulativeTotals, null);
@@ -1678,6 +1712,7 @@
     renderScoreboard(cumulativeCountryAgg, true);
     renderTable();
     setDeltaModeBanner(null);
+    setOtherCountryNotes(filtered.filter(L => L.country === "Other").length);
 
     const hasModuleFilter = filtersEnabled && filters.course !== "all";
     const hasCountryFilter = filtersEnabled && filters.countries.size > 0;
@@ -1701,6 +1736,7 @@
       if (myGeneration !== renderGeneration) return;
 
       const baselineTotals = baselinePayload.totals || {};
+      setOtherCountryNotes(0); // the quick summary numbers can't say how many fall outside the 8 hubs; the exact view below does
 
       let baselineEAP = { enrolled: 0, activated: 0, paid: 0 };
       if (hasCountryFilter){
@@ -1767,11 +1803,9 @@
             ? "net-new can't be narrowed to a Program's by-country breakdown"
             : null
       });
-      // Exact figures from the learner lists. With a Country/Program filter this REPLACES the quick
-      // summary-file numbers above (cards, charts, leaderboard and gender all from one source).
-      if (chipFilterActive || !baselineHasGenderData){
-        startExactPeriodView({ baselineDate, filtered, cumulativeEnrolled: cumulativeTotals.enrolled, myGeneration, updateEverything: chipFilterActive, loadingBanner: false });
-      }
+      // Exact figures from the learner lists. These REPLACE the quick summary-file numbers above, so the
+      // cards, charts, leaderboard, gender split, directory and card downloads all come from one list of people.
+      startExactPeriodView({ baselineDate, filtered, cumulativeEnrolled: cumulativeTotals.enrolled, myGeneration, updateEverything: true, loadingBanner: false, genderPending: !baselineHasGenderData });
     }).catch(() => {
       showToast("Couldn't load the baseline snapshot for this period comparison — showing cumulative totals instead.");
     });
@@ -2103,7 +2137,9 @@
 
   function renderTable(){
     const rows = getFilteredWithSearch();
-    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + " learners";
+    document.getElementById("directoryCount").textContent = rows.length.toLocaleString() + (periodView
+      ? " learners enrolled since " + periodView.baselineDate
+      : (periodLoading ? " learners (loading who is new this period...)" : " learners"));
     const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
     if (page > totalPages) page = totalPages;
     const startIdx = (page-1)*PAGE_SIZE;
